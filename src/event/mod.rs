@@ -33,4 +33,8 @@ pub enum AppEvent {
 
     /// Toggle pause/playback state.
     TogglePause,
+
+    SeekForward,
+    SeekBackward,
+    Stop,
 }

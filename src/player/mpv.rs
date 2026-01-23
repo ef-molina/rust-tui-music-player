@@ -52,6 +52,11 @@ impl MpvController {
         self.send(&cmd);
     }
 
+    pub fn seek(&self, seconds: i64) {
+        let cmd = format!(r#"{{ "command": ["seek", {}, "relative"] }}"#, seconds);
+        self.send(&cmd);
+    }
+
     pub fn stop(&self) {
         let cmd = r#"{ "command": ["stop"] }"#;
         self.send(cmd);

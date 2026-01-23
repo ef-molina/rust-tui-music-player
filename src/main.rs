@@ -117,6 +117,15 @@ fn run_app() -> std::io::Result<()> {
             AppEvent::TogglePause => {
                 app.player.toggle_pause();
             }
+            AppEvent::SeekForward => {
+                app.player.seek(5);
+            }
+            AppEvent::SeekBackward => {
+                app.player.seek(-5);
+            }
+            AppEvent::Stop => {
+                app.player.stop();
+            }
         }
 
         terminal.draw(|frame| {

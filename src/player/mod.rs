@@ -52,6 +52,13 @@ impl Player {
         }
     }
 
+    pub fn seek(&mut self, seconds: i64) {
+        // Only seek if something is playing or paused
+        if matches!(self.state, PlaybackState::Playing | PlaybackState::Paused) {
+            self.mpv.seek(seconds);
+        }
+    }
+
     pub fn stop(&mut self) {
         self.mpv.stop();
         self.state = PlaybackState::Stopped;
