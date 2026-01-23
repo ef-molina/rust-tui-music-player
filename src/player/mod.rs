@@ -75,23 +75,4 @@ impl Player {
         self.state = PlaybackState::Stopped;
         self.current_track = None;
     }
-
-    pub fn status_text(&self) -> String {
-        let symbol = match self.state {
-            PlaybackState::Playing => "▶",
-            PlaybackState::Paused => "⏸",
-            PlaybackState::Stopped => "■",
-        };
-
-        match &self.current_track {
-            Some(path) => format!(
-                "{} {}",
-                symbol,
-                path.file_name()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or("<unknown>")
-            ),
-            None => format!("{} Stopped", symbol),
-        }
-    }
 }

@@ -36,6 +36,7 @@ pub fn poll_event(timeout: Duration) -> std::io::Result<Option<AppEvent>> {
             KeyCode::Left => Ok(Some(AppEvent::SeekBackward)),
             KeyCode::Right => Ok(Some(AppEvent::SeekForward)),
             KeyCode::Char('s') => Ok(Some(AppEvent::Stop)),
+            KeyCode::Char('n') => Ok(Some(AppEvent::JumpToNowPlaying)),
             _ => Ok(None),
         },
         _ => Ok(None),

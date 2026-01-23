@@ -37,4 +37,5 @@ pub enum AppEvent {
     SeekForward,
     SeekBackward,
     Stop,
+    JumpToNowPlaying,
 }
