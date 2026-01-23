@@ -13,10 +13,10 @@
 //! - No input handling or side effects
 
 use ratatui::{
-    layout::{Alignment, Constraint, Direction, Layout},
-    style::{Modifier, Style, Color},
-    widgets::{Block, Borders, Paragraph, Clear, List, ListItem, ListState},
     Frame,
+    layout::{Alignment, Constraint, Direction, Layout},
+    style::{Color, Modifier, Style},
+    widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph},
 };
 
 use crate::app::AppState;
@@ -41,7 +41,6 @@ pub fn draw(frame: &mut Frame, _app: &AppState) {
         .style(Style::default().add_modifier(Modifier::BOLD))
         .block(Block::default().borders(Borders::ALL));
 
-
     frame.render_widget(header, chunks[0]);
 
     // --- Body (split plane) ---
@@ -52,7 +51,6 @@ pub fn draw(frame: &mut Frame, _app: &AppState) {
             Constraint::Percentage(70), // right pane (e.g., browser)
         ])
         .split(chunks[1]);
-
 
     // Left pane: filesystem browser
     let items: Vec<ListItem> = _app
@@ -65,11 +63,7 @@ pub fn draw(frame: &mut Frame, _app: &AppState) {
         .collect();
 
     let list = List::new(items)
-        .block(
-            Block::default()
-                .title("Browser")
-                .borders(Borders::ALL),
-        )
+        .block(Block::default().title("Browser").borders(Borders::ALL))
         .highlight_style(
             Style::default()
                 .bg(Color::Blue)
@@ -78,12 +72,9 @@ pub fn draw(frame: &mut Frame, _app: &AppState) {
         )
         .highlight_symbol("➤ ");
 
-    
     let mut state = ListState::default();
     state.select(Some(_app.selected_index));
     frame.render_stateful_widget(list, body_chunks[0], &mut state);
-
-
 
     // Right pane: Preview / lyrics / Metadata placeholder
     let detail_text = if let Some(file) = &_app.active_file {
@@ -91,15 +82,10 @@ pub fn draw(frame: &mut Frame, _app: &AppState) {
     } else {
         "Track Preview / Lyrics / Metadata\n\n[No file selected]".to_string()
     };
-    
+
     let right_pane = Paragraph::new(detail_text)
         .alignment(Alignment::Center)
-        .block(
-            Block::default()
-                .title("Details")
-                .borders(Borders::ALL),
-        );
-
+        .block(Block::default().title("Details").borders(Borders::ALL));
 
     frame.render_widget(right_pane, body_chunks[1]);
 

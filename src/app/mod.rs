@@ -11,7 +11,7 @@
 //!
 //! Other modules may read from `AppState`, but only the event loop
 //! mutates it.
-//! 
+//!
 
 use std::path::PathBuf;
 
@@ -46,10 +46,7 @@ pub struct AppState {
     pub active_file: Option<String>,
 }
 
-
 impl AppState {
-    
-    
     /// Create a new application state with default values.
     pub fn new() -> Self {
         let root_dir = PathBuf::from(

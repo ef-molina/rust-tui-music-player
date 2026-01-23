@@ -14,6 +14,16 @@ use std::path::Path;
 
 use crate::app::BrowserEntry;
 
+/// Check if a file name corresponds to a supported audio file.
+fn is_supported_audio_file(name: &str) -> bool {
+    let ext = name.rsplit('.').next().unwrap_or("").to_lowercase();
+
+    matches!(
+        ext.as_str(),
+        "mp3" | "flac" | "wav" | "opus" | "ogg" | "m4a" | "aac"
+    )
+}
+
 /// Read a directory and return a list of browser entries.
 ///
 /// - Directories are listed first
@@ -29,11 +39,8 @@ pub fn read_dir(path: &Path) -> std::io::Result<Vec<BrowserEntry>> {
         let name = entry.file_name().to_string_lossy().to_string();
 
         if file_type.is_dir() {
-            dirs.push(BrowserEntry {
-                name,
-                is_dir: true,
-            });
-        } else {
+            dirs.push(BrowserEntry { name, is_dir: true });
+        } else if is_supported_audio_file(&name) {
             files.push(BrowserEntry {
                 name,
                 is_dir: false,
