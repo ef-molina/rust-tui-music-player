@@ -73,12 +73,10 @@ fn run_app() -> std::io::Result<()> {
 
         match event {
             AppEvent::Quit => {
-                app.should_quit = true;
+                app.player.shutdown();
                 break;
             }
-            AppEvent::Tick => {
-                // Future: time-based updates, UI refresh, player polling.
-            }
+            AppEvent::Tick => {}
             AppEvent::MoveUp => {
                 if app.selected_index > 0 {
                     app.selected_index -= 1;
@@ -119,10 +117,6 @@ fn run_app() -> std::io::Result<()> {
             AppEvent::TogglePause => {
                 app.player.toggle_pause();
             }
-        }
-
-        if app.should_quit {
-            break;
         }
 
         terminal.draw(|frame| {

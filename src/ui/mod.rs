@@ -21,7 +21,7 @@ use ratatui::{
 
 use crate::app::AppState;
 
-pub fn draw(frame: &mut Frame, _app: &AppState) {
+pub fn draw(frame: &mut Frame, app: &AppState) {
     let size = frame.size();
 
     frame.render_widget(Clear, size); // clear the background
@@ -39,9 +39,9 @@ pub fn draw(frame: &mut Frame, _app: &AppState) {
     let title = "Rust TUI Music Player";
 
     // Compute relative path for display
-    let path_display = _app
+    let path_display = app
         .current_dir
-        .strip_prefix(&_app.root_dir)
+        .strip_prefix(&app.root_dir)
         .ok()
         .and_then(|p| {
             if p.as_os_str().is_empty() {
@@ -67,13 +67,13 @@ pub fn draw(frame: &mut Frame, _app: &AppState) {
     let body_chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
-            Constraint::Percentage(30), // left pane (e.g., lyrics)
-            Constraint::Percentage(70), // right pane (e.g., browser)
+            Constraint::Percentage(30), // left pane (file browser)
+            Constraint::Percentage(70), // right pane (track details)
         ])
         .split(chunks[1]);
 
     // Left pane: filesystem browser
-    let items: Vec<ListItem> = _app
+    let items: Vec<ListItem> = app
         .browser_entries
         .iter()
         .map(|entry| {
@@ -93,11 +93,11 @@ pub fn draw(frame: &mut Frame, _app: &AppState) {
         .highlight_symbol("➤ ");
 
     let mut state = ListState::default();
-    state.select(Some(_app.selected_index));
+    state.select(Some(app.selected_index));
     frame.render_stateful_widget(list, body_chunks[0], &mut state);
 
     // Right pane: Preview / lyrics / Metadata placeholder
-    let detail_text = match &_app.player.current_track {
+    let detail_text = match &app.player.current_track {
         Some(path) => format!(
             "Selected for playback:\n\n{}",
             path.file_name().unwrap_or_default().to_string_lossy()
@@ -112,9 +112,14 @@ pub fn draw(frame: &mut Frame, _app: &AppState) {
     frame.render_widget(right_pane, body_chunks[1]);
 
     // --- Footer ---
-    let footer = Paragraph::new("q: quit   space: play/pause   ←/→: seek")
-        .alignment(Alignment::Center)
-        .block(Block::default().borders(Borders::ALL));
+    let status = app.player.status_text();
+
+    let footer = Paragraph::new(format!(
+        "{}    q: quit   space: play/pause   ←/→: seek",
+        status
+    ))
+    .alignment(Alignment::Center)
+    .block(Block::default().borders(Borders::ALL));
 
     frame.render_widget(footer, chunks[2]);
 }

@@ -27,9 +27,6 @@ pub struct BrowserEntry {
 }
 
 pub struct AppState {
-    /// set to true when the application should exit
-    pub should_quit: bool,
-
     /// Root directory of the file browser
     pub root_dir: PathBuf,
 
@@ -56,7 +53,6 @@ impl AppState {
                 .unwrap_or_else(|_| ".".into()),
         );
         Self {
-            should_quit: false,
             selected_index: 0,
             // active_file: None,
             player: Player::new(),
