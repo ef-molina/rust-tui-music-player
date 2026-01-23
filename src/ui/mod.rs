@@ -36,7 +36,27 @@ pub fn draw(frame: &mut Frame, _app: &AppState) {
         .split(size);
 
     // --- Header ---
-    let header = Paragraph::new("Rust TUI Music Player")
+    let title = "Rust TUI Music Player";
+
+    // Compute relative path for display
+    let path_display = _app
+        .current_dir
+        .strip_prefix(&_app.root_dir)
+        .ok()
+        .and_then(|p| {
+            if p.as_os_str().is_empty() {
+                None
+            } else {
+                Some(p)
+            }
+        })
+        .map(|p| format!("~/{}", p.display()))
+        .unwrap_or_else(|| "~/".to_string());
+
+    // Final header text
+    let header_text = format!("{title} — {path_display}");
+
+    let header = Paragraph::new(header_text)
         .alignment(Alignment::Center)
         .style(Style::default().add_modifier(Modifier::BOLD))
         .block(Block::default().borders(Borders::ALL));
@@ -77,10 +97,12 @@ pub fn draw(frame: &mut Frame, _app: &AppState) {
     frame.render_stateful_widget(list, body_chunks[0], &mut state);
 
     // Right pane: Preview / lyrics / Metadata placeholder
-    let detail_text = if let Some(file) = &_app.active_file {
-        format!("Selected for playback:\n\n{}", file)
-    } else {
-        "Track Preview / Lyrics / Metadata\n\n[No file selected]".to_string()
+    let detail_text = match &_app.player.current_track {
+        Some(path) => format!(
+            "Selected for playback:\n\n{}",
+            path.file_name().unwrap_or_default().to_string_lossy()
+        ),
+        None => "Nothing selected".to_string(),
     };
 
     let right_pane = Paragraph::new(detail_text)

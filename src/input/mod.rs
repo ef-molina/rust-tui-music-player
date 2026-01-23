@@ -12,7 +12,7 @@
 //! This separation allows input sources to change
 //! (keyboard, IPC, tests) without affecting the core logic.
 
-use crossterm::event::{self, Event, KeyCode};
+use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use std::time::Duration;
 
 use crate::event::AppEvent;
@@ -26,12 +26,13 @@ pub fn poll_event(timeout: Duration) -> std::io::Result<Option<AppEvent>> {
     }
 
     match event::read()? {
-        Event::Key(key) => match key.code {
+        Event::Key(key) if key.kind == KeyEventKind::Press => match key.code {
             KeyCode::Char('q') => Ok(Some(AppEvent::Quit)),
             KeyCode::Up => Ok(Some(AppEvent::MoveUp)),
             KeyCode::Down => Ok(Some(AppEvent::MoveDown)),
             KeyCode::Backspace => Ok(Some(AppEvent::NavigateUp)),
             KeyCode::Enter => Ok(Some(AppEvent::Activate)),
+            KeyCode::Char(' ') => Ok(Some(AppEvent::TogglePause)),
             _ => Ok(None),
         },
         _ => Ok(None),

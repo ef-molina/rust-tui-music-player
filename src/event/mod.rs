@@ -30,4 +30,7 @@ pub enum AppEvent {
 
     /// Enter the selected directory or open the selected file.
     Activate,
+
+    /// Toggle pause/playback state.
+    TogglePause,
 }

@@ -21,6 +21,7 @@ mod app;
 mod event;
 mod fs;
 mod input;
+mod player;
 mod ui;
 
 use app::AppState;
@@ -32,7 +33,6 @@ use event::AppEvent;
 use ratatui::{Terminal, backend::CrosstermBackend};
 use std::io::stdout;
 use std::time::Duration;
-// use crate::app::BrowserEntry;
 
 fn main() {
     if let Err(err) = terminal::enable_raw_mode() {
@@ -65,7 +65,7 @@ fn run_app() -> std::io::Result<()> {
     app.browser_entries = fs::read_dir(&app.current_dir).unwrap_or_else(|_| Vec::new());
 
     loop {
-        let event = match input::poll_event(Duration::from_millis(50)) {
+        let event = match input::poll_event(Duration::from_millis(10)) {
             Ok(Some(ev)) => ev,
             Ok(None) => AppEvent::Tick,
             Err(err) => return Err(err),
@@ -74,6 +74,7 @@ fn run_app() -> std::io::Result<()> {
         match event {
             AppEvent::Quit => {
                 app.should_quit = true;
+                break;
             }
             AppEvent::Tick => {
                 // Future: time-based updates, UI refresh, player polling.
@@ -110,9 +111,13 @@ fn run_app() -> std::io::Result<()> {
                                 fs::read_dir(&app.current_dir).unwrap_or_else(|_| Vec::new());
                         }
                     } else {
-                        app.active_file = Some(entry.name.clone());
+                        let track_path = app.current_dir.join(&entry.name);
+                        app.player.load(track_path);
                     }
                 }
+            }
+            AppEvent::TogglePause => {
+                app.player.toggle_pause();
             }
         }
 
