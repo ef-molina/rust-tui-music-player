@@ -21,16 +21,16 @@ mod app;
 mod event;
 mod input;
 mod ui;
+mod fs;
 
 use app::AppState;
 use event::AppEvent;
 use std::time::Duration;
-use crossterm::{
-    execute,
-    terminal::{self, EnterAlternateScreen, LeaveAlternateScreen},
-};
+use crossterm::{ execute, terminal::{self, EnterAlternateScreen, LeaveAlternateScreen} };
 use ratatui::{Terminal, backend::CrosstermBackend};
 use std::io::stdout;
+// use crate::app::BrowserEntry;
+
 
 
 fn main() {
@@ -63,6 +63,9 @@ fn run_app() -> std::io::Result<()> {
     let backend = CrosstermBackend::new(stdout());
     let mut terminal = Terminal::new(backend)?;
 
+    app.browser_entries = fs::read_dir(&app.current_dir).unwrap_or_else(|_| Vec::new());
+
+
     loop {
         let event = match input::poll_event(Duration::from_millis(50)) {
             Ok(Some(ev)) => ev,
@@ -77,6 +80,43 @@ fn run_app() -> std::io::Result<()> {
             AppEvent::Tick => {
                 // Future: time-based updates, UI refresh, player polling.
             }
+            AppEvent::MoveUp => {
+                if app.selected_index > 0 {
+                    app.selected_index -= 1;
+                }
+            }
+            AppEvent::MoveDown => {
+                if app.selected_index + 1 < app.browser_entries.len() {
+                    app.selected_index += 1;
+                }
+            }
+            AppEvent::NavigateUp => {
+                if app.current_dir != app.root_dir {
+                    if let Some(parent) = app.current_dir.parent() {
+                        app.current_dir = parent.to_path_buf();
+                        app.selected_index = 0;
+                        app.browser_entries =
+                            fs::read_dir(&app.current_dir).unwrap_or_else(|_| Vec::new());
+                    }
+                }
+            }
+            AppEvent::Activate => {
+                if let Some(entry) = app.browser_entries.get(app.selected_index) {
+                    if entry.is_dir {
+                        let new_path = app.current_dir.join(&entry.name);
+                    
+                        if new_path.starts_with(&app.root_dir) {
+                            app.current_dir = new_path;
+                            app.selected_index = 0;
+                            app.browser_entries =
+                                fs::read_dir(&app.current_dir).unwrap_or_else(|_| Vec::new());
+                        }
+                    } else {
+                        app.active_file = Some(entry.name.clone());
+                    }
+                }
+            }
+
         }
 
         if app.should_quit {

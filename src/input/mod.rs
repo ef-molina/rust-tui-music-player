@@ -28,6 +28,10 @@ pub fn poll_event(timeout: Duration) -> std::io::Result<Option<AppEvent>> {
     match event::read()? {
         Event::Key(key) => match key.code {
             KeyCode::Char('q') => Ok(Some(AppEvent::Quit)),
+            KeyCode::Up => Ok(Some(AppEvent::MoveUp)),
+            KeyCode::Down => Ok(Some(AppEvent::MoveDown)),
+            KeyCode::Backspace => Ok(Some(AppEvent::NavigateUp)),
+            KeyCode::Enter => Ok(Some(AppEvent::Activate)),
             _ => Ok(None),
         },
         _ => Ok(None),

@@ -18,4 +18,16 @@ pub enum AppEvent {
 
     /// A tick event, used for periodic updates (UI refresh, etc.).
     Tick,
+
+    /// Move the selection up in the browser.
+    MoveUp,
+
+    /// Move the selection down in the browser.
+    MoveDown,
+
+    /// Back into the parent directory or close current file.
+    NavigateUp,
+
+    /// Enter the selected directory or open the selected file.
+    Activate,
 }

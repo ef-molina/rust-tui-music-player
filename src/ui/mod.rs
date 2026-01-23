@@ -14,8 +14,8 @@
 
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout},
-    style::{Modifier, Style},
-    widgets::{Block, Borders, Paragraph, Clear},
+    style::{Modifier, Style, Color},
+    widgets::{Block, Borders, Paragraph, Clear, List, ListItem, ListState},
     Frame,
 };
 
@@ -44,12 +44,64 @@ pub fn draw(frame: &mut Frame, _app: &AppState) {
 
     frame.render_widget(header, chunks[0]);
 
-    // --- Body ---
-    let body = Paragraph::new("Lyrics / file browser will live here")
-        .alignment(Alignment::Center)
-        .block(Block::default().borders(Borders::ALL));
+    // --- Body (split plane) ---
+    let body_chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage(30), // left pane (e.g., lyrics)
+            Constraint::Percentage(70), // right pane (e.g., browser)
+        ])
+        .split(chunks[1]);
 
-    frame.render_widget(body, chunks[1]);
+
+    // Left pane: filesystem browser
+    let items: Vec<ListItem> = _app
+        .browser_entries
+        .iter()
+        .map(|entry| {
+            let prefix = if entry.is_dir { "📁 " } else { "🎵 " };
+            ListItem::new(format!("{}{}", prefix, entry.name))
+        })
+        .collect();
+
+    let list = List::new(items)
+        .block(
+            Block::default()
+                .title("Browser")
+                .borders(Borders::ALL),
+        )
+        .highlight_style(
+            Style::default()
+                .bg(Color::Blue)
+                .fg(Color::Black)
+                .add_modifier(Modifier::BOLD),
+        )
+        .highlight_symbol("➤ ");
+
+    
+    let mut state = ListState::default();
+    state.select(Some(_app.selected_index));
+    frame.render_stateful_widget(list, body_chunks[0], &mut state);
+
+
+
+    // Right pane: Preview / lyrics / Metadata placeholder
+    let detail_text = if let Some(file) = &_app.active_file {
+        format!("Selected for playback:\n\n{}", file)
+    } else {
+        "Track Preview / Lyrics / Metadata\n\n[No file selected]".to_string()
+    };
+    
+    let right_pane = Paragraph::new(detail_text)
+        .alignment(Alignment::Center)
+        .block(
+            Block::default()
+                .title("Details")
+                .borders(Borders::ALL),
+        );
+
+
+    frame.render_widget(right_pane, body_chunks[1]);
 
     // --- Footer ---
     let footer = Paragraph::new("q: quit   space: play/pause   ←/→: seek")
