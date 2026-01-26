@@ -21,7 +21,7 @@ use ratatui::{
 };
 
 use crate::app::AppState;
-use crate::player::PlaybackState; // NEW: needed for footer + playing indicator
+use crate::player::PlaybackState;
 
 // -----------------------------------------------------------------------------
 // UI-only helper to truncate long filenames nicely (middle truncation)
@@ -35,10 +35,22 @@ fn truncate_middle(s: &str, max_len: usize) -> String {
     format!("{}…{}", &s[..keep], &s[s.len() - keep..])
 }
 
+// -----------------------------------------------------------------------------
+// UI-only helper to format seconds as mm:ss
+// -----------------------------------------------------------------------------
+fn format_time(seconds: Option<f64>) -> String {
+    let secs = match seconds {
+        Some(s) => s as u64,
+        None => return "--:--".to_string(),
+    };
+
+    format!("{:02}:{:02}", secs / 60, secs % 60)
+}
+
 pub fn draw(frame: &mut Frame, app: &AppState) {
     let size = frame.size();
 
-    frame.render_widget(Clear, size); // clear the background
+    frame.render_widget(Clear, size);
 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -50,7 +62,7 @@ pub fn draw(frame: &mut Frame, app: &AppState) {
         .split(size);
 
     // -------------------------------------------------------------------------
-    // Extract currently playing filename ONCE for reuse everywhere in UI
+    // Extract currently playing filename ONCE
     // -------------------------------------------------------------------------
     let playing_name: Option<&str> = app
         .player
@@ -59,10 +71,11 @@ pub fn draw(frame: &mut Frame, app: &AppState) {
         .and_then(|p| p.file_name())
         .and_then(|s| s.to_str());
 
-    // --- Header ---------------------------------------------------------------
+    // -------------------------------------------------------------------------
+    // Header
+    // -------------------------------------------------------------------------
     let title = "Rust TUI Music Player";
 
-    // Compute relative path for display
     let path_display = app
         .current_dir
         .strip_prefix(&app.root_dir)
@@ -77,27 +90,22 @@ pub fn draw(frame: &mut Frame, app: &AppState) {
         .map(|p| format!("~/{}", p.display()))
         .unwrap_or_else(|| "~/".to_string());
 
-    let header_text = format!("{title} — {path_display}");
-
-    let header = Paragraph::new(header_text)
+    let header = Paragraph::new(format!("{title} — {path_display}"))
         .alignment(Alignment::Center)
         .style(Style::default().add_modifier(Modifier::BOLD))
         .block(Block::default().borders(Borders::ALL));
 
     frame.render_widget(header, chunks[0]);
 
-    // --- Body (split plane) ----------------------------------------------------
+    // -------------------------------------------------------------------------
+    // Body
+    // -------------------------------------------------------------------------
     let body_chunks = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage(30), // left pane (file browser)
-            Constraint::Percentage(70), // right pane (track details)
-        ])
+        .constraints([Constraint::Percentage(30), Constraint::Percentage(70)])
         .split(chunks[1]);
 
     // --- Left pane: filesystem browser ----------------------------------------
-
-    // browser entries highlight the *playing* track
     let items: Vec<ListItem> = app
         .browser_entries
         .iter()
@@ -140,9 +148,7 @@ pub fn draw(frame: &mut Frame, app: &AppState) {
     state.select(Some(app.selected_index));
     frame.render_stateful_widget(list, body_chunks[0], &mut state);
 
-    // --- Right pane: Details ---------------------------------------------------
-
-    // reuse playing_name instead of re-deriving it
+    // --- Right pane: details ---------------------------------------------------
     let detail_text = match playing_name {
         Some(name) => format!("Selected for playback:\n\n{}", name),
         None => "Nothing selected".to_string(),
@@ -154,30 +160,24 @@ pub fn draw(frame: &mut Frame, app: &AppState) {
 
     frame.render_widget(right_pane, body_chunks[1]);
 
-    // --- Footer ---------------------------------------------------------------
-
-    // 1) Draw a single outer footer block that owns ALL borders
+    // -------------------------------------------------------------------------
+    // Footer
+    // -------------------------------------------------------------------------
     let footer_block = Block::default().borders(Borders::ALL).title("Now Playing");
 
-    // 2) Get the inner area so content does not overwrite borders
     let footer_inner = footer_block.inner(chunks[2]);
-
     frame.render_widget(footer_block, chunks[2]);
 
-    // 3) Split footer content vertically (stacked layout)
     let footer_rows = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(1), // now playing line
-            Constraint::Length(1), // controls line
-            Constraint::Min(1),    // reserved (progress bar later)
+            Constraint::Length(1), // now playing
+            Constraint::Length(1), // controls
+            Constraint::Min(1),    // progress
         ])
         .split(footer_inner);
 
-    // -------------------------------------------------------------------------
-    // Row 1: Now Playing (centered, no borders)
-    // -------------------------------------------------------------------------
-
+    // --- Row 1: Now Playing ----------------------------------------------------
     let (symbol, color) = match app.player.state {
         PlaybackState::Playing => ("▶", Color::Green),
         PlaybackState::Paused => ("⏸", Color::Yellow),
@@ -197,22 +197,52 @@ pub fn draw(frame: &mut Frame, app: &AppState) {
         Span::raw(footer_track),
     ]);
 
-    let status_widget = Paragraph::new(status_line).alignment(Alignment::Center);
+    frame.render_widget(
+        Paragraph::new(status_line).alignment(Alignment::Center),
+        footer_rows[0],
+    );
 
-    frame.render_widget(status_widget, footer_rows[0]);
+    // --- Row 2: Controls -------------------------------------------------------
+    frame.render_widget(
+        Paragraph::new("←/→ seek   s stop   space pause   n now playing   q quit")
+            .alignment(Alignment::Center)
+            .style(Style::default().fg(Color::DarkGray)),
+        footer_rows[1],
+    );
 
-    // -------------------------------------------------------------------------
-    // Row 2: Controls (centered, subtle color)
-    // -------------------------------------------------------------------------
+    // --- Row 3: Progress bar ---------------------------------------------------
+    let pos = app.player.metrics.position;
+    let dur = app.player.metrics.duration;
 
-    let controls = Paragraph::new("←/→ seek   s stop   space pause   n now playing   q quit")
-        .alignment(Alignment::Center)
-        .style(Style::default().fg(Color::DarkGray));
+    let progress = match (pos, dur) {
+        (Some(p), Some(d)) if d > 0.0 => (p / d).clamp(0.0, 1.0),
+        _ => 0.0,
+    };
 
-    frame.render_widget(controls, footer_rows[1]);
+    // Calculate the width of the progress bar, reserving space for the time label
+    let time_label = format!("{} / {}", format_time(pos), format_time(dur));
+    let reserved = time_label.len() + 3; // space + brackets
 
-    // -------------------------------------------------------------------------
-    // Row 3: Reserved for progress bar / timing (empty for now)
-    // -------------------------------------------------------------------------
-    // frame.render_widget(progress_bar, footer_rows[2]); // later
+    let bar_width = footer_rows[2].width.saturating_sub(reserved as u16).max(1) as usize;
+
+    let filled = (progress * bar_width as f64).round() as usize;
+
+    let bar = format!(
+        "[{}{}]",
+        "█".repeat(filled),
+        "─".repeat(bar_width.saturating_sub(filled)),
+    );
+
+    let timing = time_label;
+
+    let progress_line = Line::from(vec![
+        Span::styled(bar, Style::default().fg(Color::Green)),
+        Span::raw(" "),
+        Span::styled(timing, Style::default().fg(Color::Gray)),
+    ]);
+
+    frame.render_widget(
+        Paragraph::new(progress_line).alignment(Alignment::Center),
+        footer_rows[2],
+    );
 }

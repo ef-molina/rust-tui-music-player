@@ -76,7 +76,9 @@ fn run_app() -> std::io::Result<()> {
                 app.player.shutdown();
                 break;
             }
-            AppEvent::Tick => {}
+            AppEvent::Tick => {
+                app.player.poll_metrics();
+            }
             AppEvent::MoveUp => {
                 if app.selected_index > 0 {
                     app.selected_index -= 1;
@@ -115,29 +117,33 @@ fn run_app() -> std::io::Result<()> {
                 }
             }
             AppEvent::JumpToNowPlaying => {
-                if let Some(track_path) = &app.player.current_track {
-                    if let Some(parent) = track_path.parent() {
-                        // Safety: ensure we stay inside the music root
-                        if parent.starts_with(&app.root_dir) {
-                            app.current_dir = parent.to_path_buf();
-                            app.browser_entries =
-                                fs::read_dir(&app.current_dir).unwrap_or_else(|_| Vec::new());
+                let Some(track_path) = &app.player.current_track else {
+                    return Ok(());
+                };
 
-                            // Select the currently playing file
-                            if let Some(file_name) = track_path.file_name().and_then(|s| s.to_str())
-                            {
-                                if let Some(index) = app
-                                    .browser_entries
-                                    .iter()
-                                    .position(|e| !e.is_dir && e.name == file_name)
-                                {
-                                    app.selected_index = index;
-                                } else {
-                                    app.selected_index = 0;
-                                }
-                            }
-                        }
-                    }
+                let Some(parent) = track_path.parent() else {
+                    return Ok(());
+                };
+
+                // Safety: ensure we stay inside the music root
+                if !parent.starts_with(&app.root_dir) {
+                    return Ok(());
+                }
+
+                app.current_dir = parent.to_path_buf();
+                app.browser_entries = fs::read_dir(&app.current_dir).unwrap_or_else(|_| Vec::new());
+
+                // Select the currently playing file
+                let Some(file_name) = track_path.file_name().and_then(|s| s.to_str()) else {
+                    return Ok(());
+                };
+
+                if let Some(index) = app
+                    .browser_entries
+                    .iter()
+                    .position(|e| !e.is_dir && e.name == file_name)
+                {
+                    app.selected_index = index;
                 }
             }
 

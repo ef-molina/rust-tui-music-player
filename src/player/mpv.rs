@@ -3,7 +3,7 @@
 //! Responsible for spawning mpv and sending JSON IPC commands.
 //! No UI logic. No filesystem logic.
 
-use std::io::Write;
+use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::net::UnixStream;
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
@@ -66,5 +66,21 @@ impl MpvController {
         let _ = self.child.kill();
         let _ = self.child.wait();
         let _ = std::fs::remove_file(MPV_SOCKET);
+    }
+
+    pub(crate) fn get_property_f64(&self, name: &str) -> Option<f64> {
+        let stream = UnixStream::connect(MPV_SOCKET).ok()?;
+        let mut stream = BufReader::new(stream);
+
+        let cmd = format!(r#"{{ "command": ["get_property", "{}"] }}"#, name);
+
+        stream.get_mut().write_all(cmd.as_bytes()).ok()?;
+        stream.get_mut().write_all(b"\n").ok()?;
+
+        let mut line = String::new();
+        stream.read_line(&mut line).ok()?;
+
+        let json: serde_json::Value = serde_json::from_str(&line).ok()?;
+        json.get("data")?.as_f64()
     }
 }

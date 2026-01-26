@@ -15,8 +15,15 @@ pub enum PlaybackState {
     Paused,
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+pub struct PlaybackMetrics {
+    pub position: Option<f64>, // seconds
+    pub duration: Option<f64>, // seconds
+}
+
 pub struct Player {
     pub state: PlaybackState,
+    pub metrics: PlaybackMetrics,
     pub current_track: Option<PathBuf>,
     mpv: MpvController,
 }
@@ -27,6 +34,7 @@ impl Player {
             MpvController::spawn().expect("Failed to spawn mpv. Is it installed and in your PATH?");
         Self {
             state: PlaybackState::Stopped,
+            metrics: PlaybackMetrics::default(),
             current_track: None,
             mpv,
         }
@@ -36,6 +44,7 @@ impl Player {
         self.mpv.load_file(&track);
         self.current_track = Some(track);
         self.state = PlaybackState::Playing;
+        self.metrics = PlaybackMetrics::default();
     }
 
     pub fn toggle_pause(&mut self) {
@@ -63,6 +72,7 @@ impl Player {
         self.mpv.stop();
         self.state = PlaybackState::Stopped;
         self.current_track = None;
+        self.metrics = PlaybackMetrics::default();
     }
 
     pub fn shutdown(&mut self) {
@@ -74,5 +84,14 @@ impl Player {
 
         self.state = PlaybackState::Stopped;
         self.current_track = None;
+    }
+
+    pub fn poll_metrics(&mut self) {
+        if !matches!(self.state, PlaybackState::Playing | PlaybackState::Paused) {
+            return;
+        }
+
+        self.metrics.position = self.mpv.get_property_f64("time-pos");
+        self.metrics.duration = self.mpv.get_property_f64("duration");
     }
 }
