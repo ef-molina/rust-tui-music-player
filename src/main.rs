@@ -48,6 +48,35 @@ fn main() {
     }
 }
 
+/// --------------------------------------------------
+/// Album playback helpers (no fs / mpv policy)
+/// --------------------------------------------------
+fn play_album_index(app: &mut AppState, index: usize) {
+    let Some(album_dir) = &app.active_album_dir else {
+        return;
+    };
+
+    let Some(entry) = app.album_entries.get(index) else {
+        return;
+    };
+
+    app.album_selected = index;
+    app.player.load(album_dir.join(&entry.name));
+}
+
+fn play_next_or_stop(app: &mut AppState) {
+    let next = app.album_selected + 1;
+
+    if next < app.album_entries.len() {
+        play_album_index(app, next);
+    } else {
+        app.player.stop();
+    }
+}
+
+/// --------------------------------------------------
+/// Main application loop
+/// --------------------------------------------------
 fn run_app() -> std::io::Result<()> {
     let mut app = AppState::new();
     let backend = CrosstermBackend::new(stdout());
@@ -55,17 +84,9 @@ fn run_app() -> std::io::Result<()> {
 
     app.browser_entries = fs::read_dir(&app.current_dir).unwrap_or_default();
 
-    // Initialize album with root loose tracks if any
-    let root_tracks: Vec<_> = app
-        .browser_entries
-        .iter()
-        .filter(|e| !e.is_dir)
-        .cloned()
-        .collect();
-
-    if !root_tracks.is_empty() {
-        app.active_album_dir = Some(app.root_dir.clone());
-        app.album_entries = root_tracks;
+    if let Ok(Some(tracks)) = fs::detect_loose_tracks(&app.current_dir) {
+        app.active_album_dir = Some(app.current_dir.clone());
+        app.album_entries = tracks;
         app.album_selected = 0;
     }
 
@@ -85,6 +106,11 @@ fn run_app() -> std::io::Result<()> {
 
             AppEvent::Tick => {
                 app.player.poll_metrics();
+
+                // Auto-advance when track finishes
+                if app.player.is_track_finished() {
+                    play_next_or_stop(&mut app);
+                }
             }
 
             // -----------------------------------------------------------------
@@ -142,29 +168,51 @@ fn run_app() -> std::io::Result<()> {
                         app.browser_entries = fs::read_dir(&app.current_dir).unwrap_or_default();
                         app.selected_index = 0;
 
-                        // CHANGED: Rehydrate root album when returning home
-                        if app.current_dir == app.root_dir && app.active_album_dir.is_none() {
-                            let root_tracks: Vec<_> = app
-                                .browser_entries
-                                .iter()
-                                .filter(|e| !e.is_dir)
-                                .cloned()
-                                .collect();
-
-                            if !root_tracks.is_empty() {
-                                app.active_album_dir = Some(app.root_dir.clone());
-                                app.album_entries = root_tracks;
-                                app.album_selected = 0;
-                            }
+                        if let Ok(Some(tracks)) = fs::detect_loose_tracks(&app.current_dir) {
+                            app.active_album_dir = Some(app.current_dir.clone());
+                            app.album_entries = tracks;
+                            app.album_selected = 0;
                         }
                     }
                 }
             },
+            // -----------------------------------------------------------------
+            AppEvent::JumpToNowPlaying => {
+                let Some(track_path) = &app.player.current_track else {
+                    continue;
+                };
+
+                let Some(album_dir) = track_path.parent() else {
+                    continue;
+                };
+
+                if !album_dir.starts_with(&app.root_dir) {
+                    continue;
+                }
+
+                if let Ok(Some(tracks)) = fs::detect_album(album_dir) {
+                    app.active_album_dir = Some(album_dir.to_path_buf());
+                    app.album_entries = tracks;
+                    app.album_selected = track_path
+                        .file_name()
+                        .and_then(|s| s.to_str())
+                        .and_then(|name| app.album_entries.iter().position(|e| e.name == name))
+                        .unwrap_or(0);
+                    app.focus = FocusPane::Album;
+                }
+
+                // Browser shows sibling albums, not album contents
+                let browser_dir = album_dir.parent().unwrap_or(&app.root_dir);
+                app.current_dir = browser_dir.to_path_buf();
+                app.browser_entries = fs::read_dir(&app.current_dir).unwrap_or_default();
+                app.selected_index = 0;
+            }
 
             // -----------------------------------------------------------------
+            // Player controls (focus-dependent)
             AppEvent::Activate => match app.focus {
                 FocusPane::Browser => {
-                    // CHANGED: browser activation uses directories only
+                    // browser activation uses directories only
                     let browser_dirs: Vec<_> = app
                         .browser_entries
                         .iter()
@@ -181,12 +229,8 @@ fn run_app() -> std::io::Result<()> {
                         continue;
                     }
 
-                    let entries = fs::read_dir(&new_path).unwrap_or_default();
-                    let tracks: Vec<_> = entries.iter().filter(|e| !e.is_dir).cloned().collect();
-                    let has_subdirs = entries.iter().any(|e| e.is_dir);
-
-                    if !tracks.is_empty() && !has_subdirs {
-                        // CHANGED: Album detected — DO NOT navigate browser
+                    if let Ok(Some(tracks)) = fs::detect_album(&new_path) {
+                        // Album detected — DO NOT navigate browser
                         app.active_album_dir = Some(new_path);
                         app.album_entries = tracks;
                         app.album_selected = 0;
@@ -194,64 +238,41 @@ fn run_app() -> std::io::Result<()> {
                     } else {
                         // Normal directory navigation — DO NOT clear album
                         app.current_dir = new_path;
-                        app.browser_entries = entries;
+                        app.browser_entries = fs::read_dir(&app.current_dir).unwrap_or_default();
                         app.selected_index = 0;
                     }
                 }
 
                 FocusPane::Album => {
-                    // CHANGED: Root album is playable
-                    if let (Some(entry), Some(album_dir)) = (
-                        app.album_entries.get(app.album_selected),
-                        &app.active_album_dir,
-                    ) {
-                        app.player.load(album_dir.join(&entry.name));
-                    }
+                    let index = app.album_selected;
+                    play_album_index(&mut app, index);
                 }
             },
-
-            // -----------------------------------------------------------------
-            AppEvent::JumpToNowPlaying => {
-                let Some(track_path) = &app.player.current_track else {
-                    continue;
-                };
-
-                let Some(album_dir) = track_path.parent() else {
-                    continue;
-                };
-
-                if !album_dir.starts_with(&app.root_dir) {
-                    continue;
-                }
-
-                let entries = fs::read_dir(album_dir).unwrap_or_default();
-                let tracks: Vec<_> = entries.iter().filter(|e| !e.is_dir).cloned().collect();
-                let has_subdirs = entries.iter().any(|e| e.is_dir);
-
-                if !tracks.is_empty() && !has_subdirs {
-                    // CHANGED: Restore album context
-                    app.active_album_dir = Some(album_dir.to_path_buf());
-                    app.album_entries = tracks;
-                    app.album_selected = track_path
-                        .file_name()
-                        .and_then(|s| s.to_str())
-                        .and_then(|name| app.album_entries.iter().position(|e| e.name == name))
-                        .unwrap_or(0);
-                    app.focus = FocusPane::Album;
-                }
-
-                // CHANGED: Browser shows sibling albums, not album contents
-                let browser_dir = album_dir.parent().unwrap_or(&app.root_dir);
-                app.current_dir = browser_dir.to_path_buf();
-                app.browser_entries = fs::read_dir(&app.current_dir).unwrap_or_default();
-                app.selected_index = 0;
-            }
 
             // -----------------------------------------------------------------
             AppEvent::TogglePause => app.player.toggle_pause(),
             AppEvent::SeekForward => app.player.seek(5),
             AppEvent::SeekBackward => app.player.seek(-5),
             AppEvent::Stop => app.player.stop(),
+            AppEvent::NextTrack => {
+                play_next_or_stop(&mut app);
+            }
+            AppEvent::PrevTrack => {
+                let restart_current = app
+                    .player
+                    .metrics
+                    .position
+                    .map(|p| p > 2.0)
+                    .unwrap_or(false);
+
+                let target = if restart_current || app.album_selected == 0 {
+                    app.album_selected
+                } else {
+                    app.album_selected - 1
+                };
+
+                play_album_index(&mut app, target);
+            }
         }
 
         terminal.draw(|frame| ui::draw(frame, &app))?;

@@ -24,6 +24,44 @@ fn is_supported_audio_file(name: &str) -> bool {
     )
 }
 
+/// If `dir` is a leaf album directory, return its track entries.
+/// A leaf album:
+/// - contains at least one audio file
+/// - contains NO subdirectories
+pub fn detect_album(dir: &Path) -> std::io::Result<Option<Vec<BrowserEntry>>> {
+    let entries = read_dir(dir)?;
+
+    let has_subdirs = entries.iter().any(|e| e.is_dir);
+    if has_subdirs {
+        return Ok(None);
+    }
+
+    let tracks: Vec<_> = entries.into_iter().filter(|e| !e.is_dir).collect();
+    if tracks.is_empty() {
+        return Ok(None);
+    }
+
+    Ok(Some(tracks))
+}
+
+// pub fn is_leaf_album(dir: &Path) -> bool {
+//     detect_album(dir).ok().flatten().is_some()
+// }
+
+/// Return loose audio tracks in a directory, if any.
+/// Unlike `detect_album`, this allows subdirectories.
+pub fn detect_loose_tracks(dir: &Path) -> std::io::Result<Option<Vec<BrowserEntry>>> {
+    let entries = read_dir(dir)?;
+
+    let tracks: Vec<_> = entries.into_iter().filter(|e| !e.is_dir).collect();
+
+    if tracks.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(tracks))
+    }
+}
+
 /// Read a directory and return a list of browser entries.
 ///
 /// - Directories are listed first

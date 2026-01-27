@@ -63,8 +63,13 @@ impl MpvController {
     }
 
     pub fn shutdown(&mut self) {
-        let _ = self.child.kill();
+        // Ask mpv to quit cleanly (IMPORTANT)
+        self.send(r#"{ "command": ["quit"] }"#);
+
+        // Give mpv a brief moment to exit on its own
         let _ = self.child.wait();
+
+        // Best-effort cleanup
         let _ = std::fs::remove_file(MPV_SOCKET);
     }
 

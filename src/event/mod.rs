@@ -31,6 +31,8 @@ pub enum AppEvent {
     SeekBackward,
     Stop,
     JumpToNowPlaying,
+    NextTrack,
+    PrevTrack,
 
     /// Switch focus to diffent panes.
     FocusBrowser,

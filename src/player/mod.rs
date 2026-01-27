@@ -26,6 +26,7 @@ pub struct Player {
     pub metrics: PlaybackMetrics,
     pub current_track: Option<PathBuf>,
     mpv: MpvController,
+    has_started: bool,
 }
 
 impl Player {
@@ -37,6 +38,7 @@ impl Player {
             metrics: PlaybackMetrics::default(),
             current_track: None,
             mpv,
+            has_started: false,
         }
     }
 
@@ -45,6 +47,7 @@ impl Player {
         self.current_track = Some(track);
         self.state = PlaybackState::Playing;
         self.metrics = PlaybackMetrics::default();
+        self.has_started = false;
     }
 
     pub fn toggle_pause(&mut self) {
@@ -68,11 +71,19 @@ impl Player {
         }
     }
 
+    pub fn is_track_finished(&self) -> bool {
+        matches!(self.state, PlaybackState::Playing)
+            && self.has_started
+            && self.metrics.position.is_none()
+            && self.current_track.is_some()
+    }
+
     pub fn stop(&mut self) {
         self.mpv.stop();
         self.state = PlaybackState::Stopped;
         self.current_track = None;
         self.metrics = PlaybackMetrics::default();
+        self.has_started = false;
     }
 
     pub fn shutdown(&mut self) {
@@ -91,7 +102,14 @@ impl Player {
             return;
         }
 
-        self.metrics.position = self.mpv.get_property_f64("time-pos");
-        self.metrics.duration = self.mpv.get_property_f64("duration");
+        let pos = self.mpv.get_property_f64("time-pos");
+        let dur = self.mpv.get_property_f64("duration");
+
+        if pos.is_some() {
+            self.has_started = true;
+        }
+
+        self.metrics.position = pos;
+        self.metrics.duration = dur;
     }
 }

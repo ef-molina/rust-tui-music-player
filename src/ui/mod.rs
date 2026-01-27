@@ -260,9 +260,11 @@ pub fn draw(frame: &mut Frame, app: &AppState) {
     );
 
     frame.render_widget(
-        Paragraph::new("←/→ seek   s stop   space pause   b browser   d album   q quit")
-            .alignment(Alignment::Center)
-            .style(Style::default().fg(Color::DarkGray)),
+        Paragraph::new(
+            "←/→ seek  < prev  > next   s stop   space pause   b browser   t tracks   q quit",
+        )
+        .alignment(Alignment::Center)
+        .style(Style::default().fg(Color::DarkGray)),
         footer_rows[1],
     );
 
