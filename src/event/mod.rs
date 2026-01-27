@@ -37,4 +37,5 @@ pub enum AppEvent {
     /// Switch focus to diffent panes.
     FocusBrowser,
     FocusAlbum,
+    FocusLyrics,
 }

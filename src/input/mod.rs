@@ -41,6 +41,7 @@ pub fn poll_event(timeout: Duration) -> std::io::Result<Option<AppEvent>> {
             KeyCode::Char('t') => Ok(Some(AppEvent::FocusAlbum)),
             KeyCode::Char(']') => Ok(Some(AppEvent::NextTrack)),
             KeyCode::Char('[') => Ok(Some(AppEvent::PrevTrack)),
+            KeyCode::Char('l') => Ok(Some(AppEvent::FocusLyrics)),
             _ => Ok(None),
         },
         _ => Ok(None),

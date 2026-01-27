@@ -21,9 +21,11 @@ mod app;
 mod event;
 mod fs;
 mod input;
+mod lyrics;
 mod player;
 mod ui;
 
+use crate::lyrics::{LyricsState, load_for_track};
 use app::{AppState, FocusPane};
 use crossterm::{
     execute,
@@ -60,8 +62,16 @@ fn play_album_index(app: &mut AppState, index: usize) {
         return;
     };
 
+    let track_path = album_dir.join(&entry.name);
+
     app.album_selected = index;
     app.player.load(album_dir.join(&entry.name));
+
+    // Load lyrics for the new track
+    app.lyrics = load_for_track(&track_path)
+        .ok()
+        .flatten()
+        .map(LyricsState::new);
 }
 
 fn play_next_or_stop(app: &mut AppState) {
@@ -107,6 +117,18 @@ fn run_app() -> std::io::Result<()> {
             AppEvent::Tick => {
                 app.player.poll_metrics();
 
+                // Update lyrics state
+                if let (Some(lyrics), Some(position)) =
+                    (&mut app.lyrics, app.player.metrics.position)
+                {
+                    let prev_index = lyrics.current_index;
+                    lyrics.update(position);
+
+                    if lyrics.current_index != prev_index {
+                        app.lyric_scroll = lyrics.current_index;
+                    }
+                }
+
                 // Auto-advance when track finishes
                 if app.player.is_track_finished() {
                     play_next_or_stop(&mut app);
@@ -124,6 +146,12 @@ fn run_app() -> std::io::Result<()> {
                     app.focus = FocusPane::Album;
                 }
             }
+            AppEvent::FocusLyrics => {
+                if let Some(lyrics) = &app.lyrics {
+                    app.lyric_scroll = lyrics.current_index;
+                    app.focus = FocusPane::Lyrics;
+                }
+            }
 
             // -----------------------------------------------------------------
             // Navigation (focus-dependent)
@@ -137,6 +165,9 @@ fn run_app() -> std::io::Result<()> {
                     if app.album_selected > 0 {
                         app.album_selected -= 1;
                     }
+                }
+                FocusPane::Lyrics => {
+                    app.lyric_scroll = app.lyric_scroll.saturating_sub(1);
                 }
             },
 
@@ -152,10 +183,21 @@ fn run_app() -> std::io::Result<()> {
                         app.album_selected += 1;
                     }
                 }
+                FocusPane::Lyrics => {
+                    if let Some(lyrics) = &app.lyrics
+                        && app.lyric_scroll + 1 < lyrics.lines.len()
+                    {
+                        app.lyric_scroll += 1;
+                    }
+                }
             },
 
             // -----------------------------------------------------------------
             AppEvent::NavigateUp => match app.focus {
+                FocusPane::Lyrics => {
+                    // Exit lyrics view back to album
+                    app.focus = FocusPane::Album;
+                }
                 FocusPane::Album => {
                     // Exit album mode
                     app.focus = FocusPane::Browser;
@@ -247,13 +289,18 @@ fn run_app() -> std::io::Result<()> {
                     let index = app.album_selected;
                     play_album_index(&mut app, index);
                 }
+                FocusPane::Lyrics => {
+                    // No-op: Enter does nothing in lyrics view
+                }
             },
-
             // -----------------------------------------------------------------
             AppEvent::TogglePause => app.player.toggle_pause(),
             AppEvent::SeekForward => app.player.seek(5),
             AppEvent::SeekBackward => app.player.seek(-5),
-            AppEvent::Stop => app.player.stop(),
+            AppEvent::Stop => {
+                app.player.stop();
+                app.lyrics = None;
+            }
             AppEvent::NextTrack => {
                 play_next_or_stop(&mut app);
             }

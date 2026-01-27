@@ -13,6 +13,7 @@
 //! mutates it.
 //!
 
+use crate::lyrics::LyricsState;
 use crate::player::Player;
 use std::path::PathBuf;
 
@@ -33,6 +34,8 @@ pub enum FocusPane {
     Browser,
     /// Album controls are focused
     Album,
+    /// Lyrics pane is focused
+    Lyrics,
 }
 
 pub struct AppState {
@@ -62,6 +65,11 @@ pub struct AppState {
 
     /// Currently selected file or directory
     pub player: Player,
+
+    /// State for synced lyrics
+    pub lyrics: Option<LyricsState>,
+
+    pub lyric_scroll: usize,
 }
 
 impl AppState {
@@ -82,6 +90,8 @@ impl AppState {
             album_entries: Vec::new(),
             album_selected: 0,
             player: Player::new(),
+            lyrics: None,
+            lyric_scroll: 0,
         }
     }
 }
