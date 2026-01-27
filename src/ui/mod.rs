@@ -100,44 +100,38 @@ pub fn draw(frame: &mut Frame, app: &AppState) {
     // -------------------------------------------------------------------------
     // Left pane: Browser
     // -------------------------------------------------------------------------
+    // Browser shows ONLY directories (for navigation).
+    // Album tracks are shown in the right pane, not here.
     let browser_items: Vec<ListItem> = app
         .browser_entries
         .iter()
+        .filter(|entry| entry.is_dir) // Show directories only
         .map(|entry| {
-            let is_playing = playing_name
-                .map(|name| !entry.is_dir && entry.name == name)
-                .unwrap_or(false);
-
-            let icon = if entry.is_dir {
-                "📁 "
-            } else if is_playing {
-                "▶ "
-            } else {
-                "🎵 "
-            };
-
-            let style = if is_playing {
-                Style::default()
-                    .fg(Color::Green)
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                Style::default()
-            };
-
-            ListItem::new(format!("{}{}", icon, entry.name)).style(style)
+            let icon = "📁 ";
+            ListItem::new(format!("{}{}", icon, entry.name)).style(Style::default())
         })
         .collect();
 
+    // Browser pane: highlight with green border if focused, normal otherwise.
+    let browser_block = Block::default()
+        .title("Browser")
+        .borders(Borders::ALL)
+        .border_style(if app.focus == FocusPane::Browser {
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default()
+        });
+
     let browser = List::new(browser_items)
-        .block(Block::default().title("Browser").borders(Borders::ALL))
-        .highlight_style(if app.focus == FocusPane::Browser {
+        .block(browser_block)
+        .highlight_style(
             Style::default()
                 .bg(Color::Blue)
                 .fg(Color::Black)
-                .add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().bg(Color::DarkGray)
-        })
+                .add_modifier(Modifier::BOLD),
+        )
         .highlight_symbol("➤ ");
 
     let mut browser_state = ListState::default();
@@ -147,29 +141,71 @@ pub fn draw(frame: &mut Frame, app: &AppState) {
     // -------------------------------------------------------------------------
     // Right pane: Album / Playlist
     // -------------------------------------------------------------------------
-    if app.focus == FocusPane::Album {
-        let album_items: Vec<ListItem> = app
-            .album_entries
-            .iter()
-            .map(|entry| {
-                let is_playing = playing_name.map(|n| entry.name == n).unwrap_or(false);
+    // Album pane is shown based on active_album_dir, NOT focus.
+    // This allows album context to persist regardless of which pane is focused.
+    let (album_title, track_entries): (String, Vec<_>) =
+        if let Some(album_dir) = &app.active_album_dir {
+            (
+                album_dir
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("Album")
+                    .to_string(),
+                app.album_entries.clone(),
+            )
+        } else if app.current_dir == app.root_dir {
+            (
+                "Loose Tracks".to_string(),
+                app.browser_entries
+                    .iter()
+                    .filter(|e| !e.is_dir)
+                    .cloned()
+                    .collect(),
+            )
+        } else {
+            ("No Album".to_string(), Vec::new())
+        };
 
-                let icon = if is_playing { "▶ " } else { "🎵 " };
+    let album_items: Vec<ListItem> = track_entries
+        .iter()
+        .map(|entry| {
+            let is_playing = playing_name.map(|n| n == entry.name).unwrap_or(false);
 
-                let style = if is_playing {
-                    Style::default()
-                        .fg(Color::Green)
-                        .add_modifier(Modifier::BOLD)
-                } else {
-                    Style::default()
-                };
+            let icon = if is_playing { "▶ " } else { "🎵 " };
+            let style = if is_playing {
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default()
+            };
 
-                ListItem::new(format!("{}{}", icon, entry.name)).style(style)
-            })
-            .collect();
+            ListItem::new(format!("{icon}{}", entry.name)).style(style)
+        })
+        .collect();
 
+    let album_block = Block::default()
+        .title(album_title)
+        .borders(Borders::ALL)
+        .border_style(if app.focus == FocusPane::Album {
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default()
+        });
+
+    if album_items.is_empty() {
+        frame.render_widget(
+            Paragraph::new("(No tracks to display)")
+                .alignment(Alignment::Center)
+                .style(Style::default().fg(Color::DarkGray))
+                .block(album_block),
+            body_chunks[1],
+        );
+    } else {
         let album = List::new(album_items)
-            .block(Block::default().title("Album").borders(Borders::ALL))
+            .block(album_block)
             .highlight_style(
                 Style::default()
                     .bg(Color::Blue)
@@ -181,12 +217,6 @@ pub fn draw(frame: &mut Frame, app: &AppState) {
         let mut album_state = ListState::default();
         album_state.select(Some(app.album_selected));
         frame.render_stateful_widget(album, body_chunks[1], &mut album_state);
-    } else {
-        let placeholder = Paragraph::new("Select an album to view tracks")
-            .alignment(Alignment::Center)
-            .block(Block::default().title("Details").borders(Borders::ALL));
-
-        frame.render_widget(placeholder, body_chunks[1]);
     }
 
     // -------------------------------------------------------------------------
