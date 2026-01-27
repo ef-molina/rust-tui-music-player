@@ -26,6 +26,15 @@ pub struct BrowserEntry {
     pub is_dir: bool,
 }
 
+/// Focused application state
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FocusPane {
+    /// File browser is focused
+    Browser,
+    /// Album controls are focused
+    Album,
+}
+
 pub struct AppState {
     /// Root directory of the file browser
     pub root_dir: PathBuf,
@@ -39,8 +48,19 @@ pub struct AppState {
     /// List of entries in the current directory
     pub browser_entries: Vec<BrowserEntry>,
 
+    /// Which pane currently has focus
+    pub focus: FocusPane,
+
+    /// Directory of active album/playlist
+    pub active_album_dir: Option<PathBuf>,
+
+    /// Tracks shown in album/playlist view
+    pub album_entries: Vec<BrowserEntry>,
+
+    /// Index of the currently selected album entry
+    pub album_selected: usize,
+
     /// Currently selected file or directory
-    // pub active_file: Option<String>,
     pub player: Player,
 }
 
@@ -53,12 +73,15 @@ impl AppState {
                 .unwrap_or_else(|_| ".".into()),
         );
         Self {
-            selected_index: 0,
-            // active_file: None,
-            player: Player::new(),
             root_dir: root_dir.clone(),
             current_dir: root_dir,
             browser_entries: Vec::new(),
+            selected_index: 0,
+            focus: FocusPane::Browser,
+            active_album_dir: None,
+            album_entries: Vec::new(),
+            album_selected: 0,
+            player: Player::new(),
         }
     }
 }

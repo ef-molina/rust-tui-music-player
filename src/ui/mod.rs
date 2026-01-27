@@ -4,7 +4,7 @@
 //!
 //! Layout (top to bottom):
 //! - Header: application title / track info
-//! - Body: main content area (future lyrics / browser)
+//! - Body: main content area
 //! - Footer: controls and status
 //!
 //! Design rules:
@@ -20,56 +20,41 @@ use ratatui::{
     widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph},
 };
 
-use crate::app::AppState;
+use crate::app::{AppState, FocusPane};
 use crate::player::PlaybackState;
+use unicode_width::UnicodeWidthStr;
 
 // -----------------------------------------------------------------------------
-// UI-only helper to truncate long filenames nicely (middle truncation)
+// UI helpers
 // -----------------------------------------------------------------------------
 fn truncate_middle(s: &str, max_len: usize) -> String {
     if s.len() <= max_len {
         return s.to_string();
     }
-
     let keep = max_len / 2 - 1;
     format!("{}…{}", &s[..keep], &s[s.len() - keep..])
 }
 
-// -----------------------------------------------------------------------------
-// UI-only helper to format seconds as mm:ss
-// -----------------------------------------------------------------------------
 fn format_time(seconds: Option<f64>) -> String {
     let secs = match seconds {
         Some(s) => s as u64,
         None => return "--:--".to_string(),
     };
-
     format!("{:02}:{:02}", secs / 60, secs % 60)
 }
 
 pub fn draw(frame: &mut Frame, app: &AppState) {
     let size = frame.size();
-
     frame.render_widget(Clear, size);
 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3), // header
-            Constraint::Min(1),    // body
-            Constraint::Length(5), // footer
+            Constraint::Length(3),
+            Constraint::Min(1),
+            Constraint::Length(5),
         ])
         .split(size);
-
-    // -------------------------------------------------------------------------
-    // Extract currently playing filename ONCE
-    // -------------------------------------------------------------------------
-    let playing_name: Option<&str> = app
-        .player
-        .current_track
-        .as_ref()
-        .and_then(|p| p.file_name())
-        .and_then(|s| s.to_str());
 
     // -------------------------------------------------------------------------
     // Header
@@ -105,8 +90,17 @@ pub fn draw(frame: &mut Frame, app: &AppState) {
         .constraints([Constraint::Percentage(30), Constraint::Percentage(70)])
         .split(chunks[1]);
 
-    // --- Left pane: filesystem browser ----------------------------------------
-    let items: Vec<ListItem> = app
+    let playing_name = app
+        .player
+        .current_track
+        .as_ref()
+        .and_then(|p| p.file_name())
+        .and_then(|s| s.to_str());
+
+    // -------------------------------------------------------------------------
+    // Left pane: Browser
+    // -------------------------------------------------------------------------
+    let browser_items: Vec<ListItem> = app
         .browser_entries
         .iter()
         .map(|entry| {
@@ -134,50 +128,83 @@ pub fn draw(frame: &mut Frame, app: &AppState) {
         })
         .collect();
 
-    let list = List::new(items)
+    let browser = List::new(browser_items)
         .block(Block::default().title("Browser").borders(Borders::ALL))
-        .highlight_style(
+        .highlight_style(if app.focus == FocusPane::Browser {
             Style::default()
                 .bg(Color::Blue)
                 .fg(Color::Black)
-                .add_modifier(Modifier::BOLD),
-        )
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().bg(Color::DarkGray)
+        })
         .highlight_symbol("➤ ");
 
-    let mut state = ListState::default();
-    state.select(Some(app.selected_index));
-    frame.render_stateful_widget(list, body_chunks[0], &mut state);
+    let mut browser_state = ListState::default();
+    browser_state.select(Some(app.selected_index));
+    frame.render_stateful_widget(browser, body_chunks[0], &mut browser_state);
 
-    // --- Right pane: details ---------------------------------------------------
-    let detail_text = match playing_name {
-        Some(name) => format!("Selected for playback:\n\n{}", name),
-        None => "Nothing selected".to_string(),
-    };
+    // -------------------------------------------------------------------------
+    // Right pane: Album / Playlist
+    // -------------------------------------------------------------------------
+    if app.focus == FocusPane::Album {
+        let album_items: Vec<ListItem> = app
+            .album_entries
+            .iter()
+            .map(|entry| {
+                let is_playing = playing_name.map(|n| entry.name == n).unwrap_or(false);
 
-    let right_pane = Paragraph::new(detail_text)
-        .alignment(Alignment::Center)
-        .block(Block::default().title("Details").borders(Borders::ALL));
+                let icon = if is_playing { "▶ " } else { "🎵 " };
 
-    frame.render_widget(right_pane, body_chunks[1]);
+                let style = if is_playing {
+                    Style::default()
+                        .fg(Color::Green)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default()
+                };
+
+                ListItem::new(format!("{}{}", icon, entry.name)).style(style)
+            })
+            .collect();
+
+        let album = List::new(album_items)
+            .block(Block::default().title("Album").borders(Borders::ALL))
+            .highlight_style(
+                Style::default()
+                    .bg(Color::Blue)
+                    .fg(Color::Black)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .highlight_symbol("➤ ");
+
+        let mut album_state = ListState::default();
+        album_state.select(Some(app.album_selected));
+        frame.render_stateful_widget(album, body_chunks[1], &mut album_state);
+    } else {
+        let placeholder = Paragraph::new("Select an album to view tracks")
+            .alignment(Alignment::Center)
+            .block(Block::default().title("Details").borders(Borders::ALL));
+
+        frame.render_widget(placeholder, body_chunks[1]);
+    }
 
     // -------------------------------------------------------------------------
     // Footer
     // -------------------------------------------------------------------------
     let footer_block = Block::default().borders(Borders::ALL).title("Now Playing");
-
     let footer_inner = footer_block.inner(chunks[2]);
     frame.render_widget(footer_block, chunks[2]);
 
     let footer_rows = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(1), // now playing
-            Constraint::Length(1), // controls
-            Constraint::Min(1),    // progress
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Min(1),
         ])
         .split(footer_inner);
 
-    // --- Row 1: Now Playing ----------------------------------------------------
     let (symbol, color) = match app.player.state {
         PlaybackState::Playing => ("▶", Color::Green),
         PlaybackState::Paused => ("⏸", Color::Yellow),
@@ -202,15 +229,13 @@ pub fn draw(frame: &mut Frame, app: &AppState) {
         footer_rows[0],
     );
 
-    // --- Row 2: Controls -------------------------------------------------------
     frame.render_widget(
-        Paragraph::new("←/→ seek   s stop   space pause   n now playing   q quit")
+        Paragraph::new("←/→ seek   s stop   space pause   b browser   d album   q quit")
             .alignment(Alignment::Center)
             .style(Style::default().fg(Color::DarkGray)),
         footer_rows[1],
     );
 
-    // --- Row 3: Progress bar ---------------------------------------------------
     let pos = app.player.metrics.position;
     let dur = app.player.metrics.duration;
 
@@ -219,9 +244,8 @@ pub fn draw(frame: &mut Frame, app: &AppState) {
         _ => 0.0,
     };
 
-    // Calculate the width of the progress bar, reserving space for the time label
     let time_label = format!("{} / {}", format_time(pos), format_time(dur));
-    let reserved = time_label.len() + 3; // space + brackets
+    let reserved = UnicodeWidthStr::width(time_label.as_str()) + 3;
 
     let bar_width = footer_rows[2].width.saturating_sub(reserved as u16).max(1) as usize;
 
@@ -233,12 +257,10 @@ pub fn draw(frame: &mut Frame, app: &AppState) {
         "─".repeat(bar_width.saturating_sub(filled)),
     );
 
-    let timing = time_label;
-
     let progress_line = Line::from(vec![
         Span::styled(bar, Style::default().fg(Color::Green)),
         Span::raw(" "),
-        Span::styled(timing, Style::default().fg(Color::Gray)),
+        Span::styled(time_label, Style::default().fg(Color::Gray)),
     ]);
 
     frame.render_widget(

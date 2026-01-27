@@ -19,23 +19,20 @@ pub enum AppEvent {
     /// A tick event, used for periodic updates (UI refresh, etc.).
     Tick,
 
-    /// Move the selection up in the browser.
+    /// Navigate the file browser.
     MoveUp,
-
-    /// Move the selection down in the browser.
     MoveDown,
-
-    /// Back into the parent directory or close current file.
     NavigateUp,
-
-    /// Enter the selected directory or open the selected file.
     Activate,
 
-    /// Toggle pause/playback state.
+    /// Media playback controls.
     TogglePause,
-
     SeekForward,
     SeekBackward,
     Stop,
     JumpToNowPlaying,
+
+    /// Switch focus to diffent panes.
+    FocusBrowser,
+    FocusAlbum,
 }
