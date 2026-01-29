@@ -80,6 +80,9 @@ fn render_browser(frame: &mut Frame, area: Rect, app: &AppState) {
     frame.render_stateful_widget(list, area, &mut state);
 }
 
+// -----------------------------------------------------------------------------
+// Album / Playlist renderer
+// -----------------------------------------------------------------------------
 fn render_album(frame: &mut Frame, area: Rect, app: &AppState) {
     let (title, tracks) = if let Some(dir) = &app.active_album_dir {
         (
@@ -154,30 +157,23 @@ fn render_album(frame: &mut Frame, area: Rect, app: &AppState) {
     }
 }
 
+// -----------------------------------------------------------------------------
+// Mini lyric renderer
+// -----------------------------------------------------------------------------
 fn render_lyrics_mini(frame: &mut Frame, area: Rect, app: &AppState) {
     let block = Block::default().title("Lyrics").borders(Borders::ALL);
 
-    // handle LyricsStatus instead of Option<LyricsState>
-    match &app.lyrics {
-        LyricsStatus::Loading => {
-            frame.render_widget(
-                Paragraph::new("Loading lyrics…")
-                    .alignment(Alignment::Center)
-                    .style(Style::default().fg(Color::DarkGray))
-                    .block(block),
-                area,
-            );
-            return;
-        }
-        LyricsStatus::None => {
-            frame.render_widget(
-                Paragraph::new("No lyrics available")
-                    .alignment(Alignment::Center)
-                    .style(Style::default().fg(Color::DarkGray))
-                    .block(block),
-                area,
-            );
-        }
+    let paragraph = match &app.lyrics {
+        LyricsStatus::Loading => Paragraph::new("Loading lyrics…")
+            .alignment(Alignment::Center)
+            .style(Style::default().fg(Color::DarkGray))
+            .block(block),
+
+        LyricsStatus::None => Paragraph::new("No lyrics available")
+            .alignment(Alignment::Center)
+            .style(Style::default().fg(Color::DarkGray))
+            .block(block),
+
         LyricsStatus::Loaded(lyrics) => {
             let mut lines: Vec<Line> = Vec::new();
 
@@ -204,16 +200,18 @@ fn render_lyrics_mini(frame: &mut Frame, area: Rect, app: &AppState) {
                 )));
             }
 
-            frame.render_widget(
-                Paragraph::new(lines)
-                    .alignment(Alignment::Center)
-                    .block(block),
-                area,
-            );
+            Paragraph::new(lines)
+                .alignment(Alignment::Center)
+                .block(block)
         }
-    }
+    };
+
+    frame.render_widget(paragraph, area);
 }
 
+// -----------------------------------------------------------------------------
+// Full lyrics pane
+// -----------------------------------------------------------------------------
 fn render_lyrics_full(frame: &mut Frame, area: Rect, app: &AppState) {
     let block = Block::default()
         .title("Lyrics")
@@ -224,75 +222,59 @@ fn render_lyrics_full(frame: &mut Frame, area: Rect, app: &AppState) {
                 .add_modifier(Modifier::BOLD),
         );
 
-    // handle LyricsStatus instead of Option<LyricsState>
-    match &app.lyrics {
-        LyricsStatus::Loading => {
-            frame.render_widget(
-                Paragraph::new("Loading lyrics…")
-                    .alignment(Alignment::Center)
-                    .style(Style::default().fg(Color::DarkGray)),
-                area,
-            );
-            return;
-        }
-        LyricsStatus::None => {
-            frame.render_widget(
+    let paragraph = match &app.lyrics {
+        LyricsStatus::Loading => Paragraph::new("Loading lyrics…")
+            .alignment(Alignment::Center)
+            .style(Style::default().fg(Color::DarkGray))
+            .block(block),
+
+        LyricsStatus::None => Paragraph::new("No lyrics available")
+            .alignment(Alignment::Center)
+            .style(Style::default().fg(Color::DarkGray))
+            .block(block),
+
+        LyricsStatus::Loaded(lyrics) => {
+            let lines = &lyrics.lines;
+
+            if lines.is_empty() {
                 Paragraph::new("No lyrics available")
                     .alignment(Alignment::Center)
                     .style(Style::default().fg(Color::DarkGray))
-                    .block(block),
-                area,
-            );
-            return;
-        }
-        LyricsStatus::Loaded(lyrics) => {
-            let lines = &lyrics.lines;
-            if lines.is_empty() {
-                frame.render_widget(
-                    Paragraph::new("No lyrics available")
-                        .alignment(Alignment::Center)
-                        .style(Style::default().fg(Color::DarkGray))
-                        .block(block),
-                    area,
-                );
-                return;
-            }
+                    .block(block)
+            } else {
+                let center = app.lyric_scroll.min(lines.len() - 1);
 
-            let center = app.lyric_scroll.min(lines.len() - 1);
+                let inner_height = area.height.saturating_sub(2) as usize;
+                let half = inner_height / 2;
 
-            // How many lines can we render inside the block?
-            let inner_height = area.height.saturating_sub(2) as usize; // minus borders
-            let half = inner_height / 2;
+                let start = center.saturating_sub(half);
+                let end = (start + inner_height).min(lines.len());
 
-            // Compute window bounds
-            let start = center.saturating_sub(half);
-            let end = (start + inner_height).min(lines.len());
+                let text: Vec<Line> = (start..end)
+                    .map(|i| {
+                        let line = &lines[i];
+                        let is_active = i == center;
 
-            let text: Vec<Line> = (start..end)
-                .map(|i| {
-                    let line = &lines[i];
-                    let is_active = i == center;
+                        let style = if is_active {
+                            Style::default()
+                                .fg(Color::Green)
+                                .add_modifier(Modifier::BOLD)
+                        } else {
+                            Style::default().fg(Color::Gray)
+                        };
 
-                    let style = if is_active {
-                        Style::default()
-                            .fg(Color::Green)
-                            .add_modifier(Modifier::BOLD)
-                    } else {
-                        Style::default().fg(Color::Gray)
-                    };
+                        Line::from(Span::styled(line.text.clone(), style))
+                    })
+                    .collect();
 
-                    Line::from(Span::styled(line.text.clone(), style))
-                })
-                .collect();
-
-            frame.render_widget(
                 Paragraph::new(text)
                     .alignment(Alignment::Center)
-                    .block(block),
-                area,
-            );
+                    .block(block)
+            }
         }
-    }
+    };
+
+    frame.render_widget(paragraph, area);
 }
 
 // -----------------------------------------------------------------------------

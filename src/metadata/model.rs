@@ -12,9 +12,6 @@ pub enum MetadataConfidence {
     /// Metadata came directly from tags (ffprobe / exiftool)
     Exact,
 
-    /// Metadata required filesystem or filename heuristics
-    Heuristic,
-
     /// Only filename-based metadata; do not fetch lyrics
     FilenameOnly,
 }

@@ -20,12 +20,11 @@ impl LyricsState {
     ///
     /// This should be called on each Tick.
     pub fn update(&mut self, current_time: f64) {
-        // Advance while the next line timestamp is <= current playback time
-        while self.current_index + 1 < self.lines.len()
-            && self.lines[self.current_index + 1].timestamp <= current_time
-        {
-            self.current_index += 1;
-        }
+        self.current_index = self
+            .lines
+            .iter()
+            .rposition(|line| line.timestamp <= current_time)
+            .unwrap_or(0);
     }
 
     /// Get the currently active lyric line, if any.
