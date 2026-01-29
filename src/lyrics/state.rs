@@ -46,3 +46,45 @@ impl LyricsState {
         self.lines.get(self.current_index + 1)
     }
 }
+
+// ==============================================================
+// Inline Unit Tests
+// ==============================================================
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn line(ts: f64, text: &str) -> LyricLine {
+        LyricLine {
+            timestamp: ts,
+            text: text.to_string(),
+        }
+    }
+
+    #[test]
+    fn advances_forward_in_time() {
+        let lines = vec![line(0.0, "one"), line(5.0, "two"), line(10.0, "three")];
+
+        let mut state = LyricsState::new(lines);
+
+        state.update(6.0);
+        assert_eq!(state.current().unwrap().text, "two");
+
+        state.update(11.0);
+        assert_eq!(state.current().unwrap().text, "three");
+    }
+
+    #[test]
+    fn resyncs_on_backward_seek() {
+        let lines = vec![line(0.0, "one"), line(5.0, "two"), line(10.0, "three")];
+
+        let mut state = LyricsState::new(lines);
+
+        state.update(10.0);
+        assert_eq!(state.current().unwrap().text, "three");
+
+        // simulate backward seek
+        state.update(1.0);
+        assert_eq!(state.current().unwrap().text, "one");
+    }
+}
