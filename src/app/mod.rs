@@ -14,8 +14,10 @@
 //!
 
 use crate::lyrics::LyricsState;
+use crate::lyrics_fetch::LyricsFetchResult;
 use crate::player::Player;
 use std::path::PathBuf;
+use std::sync::mpsc::Receiver;
 
 /// Represent a single entry in file browser
 #[derive(Debug, Clone)]
@@ -36,6 +38,12 @@ pub enum FocusPane {
     Album,
     /// Lyrics pane is focused
     Lyrics,
+}
+
+pub enum LyricsStatus {
+    None,
+    Loading,
+    Loaded(LyricsState),
 }
 
 pub struct AppState {
@@ -63,13 +71,13 @@ pub struct AppState {
     /// Index of the currently selected album entry
     pub album_selected: usize,
 
+    /// State for synced lyrics
+    pub lyrics: LyricsStatus,
+    pub lyric_scroll: usize,
+    pub lyrics_rx: Option<Receiver<LyricsFetchResult>>,
+
     /// Currently selected file or directory
     pub player: Player,
-
-    /// State for synced lyrics
-    pub lyrics: Option<LyricsState>,
-
-    pub lyric_scroll: usize,
 }
 
 impl AppState {
@@ -90,8 +98,9 @@ impl AppState {
             album_entries: Vec::new(),
             album_selected: 0,
             player: Player::new(),
-            lyrics: None,
+            lyrics: LyricsStatus::None,
             lyric_scroll: 0,
+            lyrics_rx: None,
         }
     }
 }

@@ -28,7 +28,10 @@ mod player;
 mod ui;
 
 use crate::lyrics::{LyricsState, load_for_track};
-use app::{AppState, FocusPane};
+use crate::lyrics_fetch::LyricsFetchResult;
+use crate::lyrics_fetch::lrclib::fetch_lrc;
+use crate::metadata::extract_metadata;
+use app::{AppState, FocusPane, LyricsStatus};
 use crossterm::{
     execute,
     terminal::{self, EnterAlternateScreen, LeaveAlternateScreen},
@@ -36,6 +39,8 @@ use crossterm::{
 use event::AppEvent;
 use ratatui::{Terminal, backend::CrosstermBackend};
 use std::io::stdout;
+use std::sync::mpsc;
+use std::thread;
 use std::time::Duration;
 
 fn main() {
@@ -59,7 +64,6 @@ fn play_album_index(app: &mut AppState, index: usize) {
     let Some(album_dir) = &app.active_album_dir else {
         return;
     };
-
     let Some(entry) = app.album_entries.get(index) else {
         return;
     };
@@ -67,16 +71,54 @@ fn play_album_index(app: &mut AppState, index: usize) {
     let track_path = album_dir.join(&entry.name);
 
     app.album_selected = index;
-    app.player.load(album_dir.join(&entry.name));
+    app.player.load(track_path.clone());
 
-    // Load lyrics for the new track (local or fetched)
-    if let Some(metadata) = crate::metadata::extract_metadata(&track_path) {
-        app.lyrics = load_for_track(&track_path, &metadata)
-            .ok()
-            .flatten()
-            .map(LyricsState::new);
-    } else {
-        app.lyrics = None;
+    // reset lyrics state immediately
+    app.lyrics = LyricsStatus::Loading;
+    app.lyric_scroll = 0;
+    app.lyrics_rx = None;
+
+    // extract metadata once
+    let metadata = match extract_metadata(&track_path) {
+        Some(m) if m.is_complete() => m,
+        _ => {
+            app.lyrics = LyricsStatus::None;
+            return;
+        }
+    };
+
+    // try local lyrics
+    match load_for_track(&track_path, &metadata) {
+        Ok(Some(lines)) => {
+            app.lyrics = LyricsStatus::Loaded(LyricsState::new(lines));
+            app.lyric_scroll = 0;
+        }
+
+        Ok(None) => {
+            // fetch in background
+            let (tx, rx) = std::sync::mpsc::channel();
+            app.lyrics_rx = Some(rx);
+
+            let meta = metadata.clone();
+            let path = track_path.clone();
+
+            std::thread::spawn(move || {
+                let result = match fetch_lrc(&meta) {
+                    Ok(Some(lrc_text)) => LyricsFetchResult::RawLrc {
+                        path,
+                        contents: lrc_text,
+                    },
+                    Ok(None) => LyricsFetchResult::NotFound,
+                    Err(_) => LyricsFetchResult::Failed,
+                };
+
+                let _ = tx.send(result);
+            });
+        }
+
+        Err(_) => {
+            app.lyrics = LyricsStatus::None;
+        }
     }
 }
 
@@ -123,8 +165,43 @@ fn run_app() -> std::io::Result<()> {
             AppEvent::Tick => {
                 app.player.poll_metrics();
 
+                // Resolve background lyrics fetch (non-blocking)
+                if let Some(rx) = &app.lyrics_rx
+                    && let Ok(result) = rx.try_recv()
+                {
+                    match result {
+                        LyricsFetchResult::RawLrc { path, contents } => {
+                            let lrc_path = path.with_extension("lrc");
+                            let tmp = lrc_path.with_extension("lrc.tmp");
+
+                            if std::fs::write(&tmp, contents).is_ok()
+                                && std::fs::rename(&tmp, &lrc_path).is_ok()
+                            {
+                                if let Ok(lines) = crate::lyrics::parse_lrc(&lrc_path) {
+                                    if !lines.is_empty() {
+                                        app.lyrics = LyricsStatus::Loaded(LyricsState::new(lines));
+                                        app.lyric_scroll = 0;
+                                    } else {
+                                        app.lyrics = LyricsStatus::None;
+                                    }
+                                } else {
+                                    app.lyrics = LyricsStatus::None;
+                                }
+                            } else {
+                                app.lyrics = LyricsStatus::None;
+                            }
+                        }
+
+                        LyricsFetchResult::NotFound | LyricsFetchResult::Failed => {
+                            app.lyrics = LyricsStatus::None;
+                        }
+                    }
+
+                    app.lyrics_rx = None;
+                }
+
                 // Update lyrics state
-                if let (Some(lyrics), Some(position)) =
+                if let (LyricsStatus::Loaded(lyrics), Some(position)) =
                     (&mut app.lyrics, app.player.metrics.position)
                 {
                     let prev_index = lyrics.current_index;
@@ -153,7 +230,7 @@ fn run_app() -> std::io::Result<()> {
                 }
             }
             AppEvent::FocusLyrics => {
-                if let Some(lyrics) = &app.lyrics {
+                if let LyricsStatus::Loaded(lyrics) = &app.lyrics {
                     app.lyric_scroll = lyrics.current_index;
                     app.focus = FocusPane::Lyrics;
                 }
@@ -190,7 +267,7 @@ fn run_app() -> std::io::Result<()> {
                     }
                 }
                 FocusPane::Lyrics => {
-                    if let Some(lyrics) = &app.lyrics
+                    if let LyricsStatus::Loaded(lyrics) = &app.lyrics
                         && app.lyric_scroll + 1 < lyrics.lines.len()
                     {
                         app.lyric_scroll += 1;
@@ -305,7 +382,7 @@ fn run_app() -> std::io::Result<()> {
             AppEvent::SeekBackward => app.player.seek(-5),
             AppEvent::Stop => {
                 app.player.stop();
-                app.lyrics = None;
+                app.lyrics = LyricsStatus::None;
             }
             AppEvent::NextTrack => {
                 play_next_or_stop(&mut app);

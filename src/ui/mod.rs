@@ -20,7 +20,7 @@ use ratatui::{
     widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph},
 };
 
-use crate::app::{AppState, FocusPane};
+use crate::app::{AppState, FocusPane, LyricsStatus};
 use crate::player::PlaybackState;
 use unicode_width::UnicodeWidthStr;
 
@@ -157,48 +157,61 @@ fn render_album(frame: &mut Frame, area: Rect, app: &AppState) {
 fn render_lyrics_mini(frame: &mut Frame, area: Rect, app: &AppState) {
     let block = Block::default().title("Lyrics").borders(Borders::ALL);
 
-    let Some(lyrics) = &app.lyrics else {
-        frame.render_widget(
-            Paragraph::new("No lyrics")
-                .alignment(Alignment::Center)
-                .style(Style::default().fg(Color::DarkGray))
-                .block(block),
-            area,
-        );
-        return;
-    };
+    // handle LyricsStatus instead of Option<LyricsState>
+    match &app.lyrics {
+        LyricsStatus::Loading => {
+            frame.render_widget(
+                Paragraph::new("Loading lyrics…")
+                    .alignment(Alignment::Center)
+                    .style(Style::default().fg(Color::DarkGray))
+                    .block(block),
+                area,
+            );
+            return;
+        }
+        LyricsStatus::None => {
+            frame.render_widget(
+                Paragraph::new("No lyrics available")
+                    .alignment(Alignment::Center)
+                    .style(Style::default().fg(Color::DarkGray))
+                    .block(block),
+                area,
+            );
+        }
+        LyricsStatus::Loaded(lyrics) => {
+            let mut lines: Vec<Line> = Vec::new();
 
-    let mut lines: Vec<Line> = Vec::new();
+            if let Some(prev) = lyrics.previous() {
+                lines.push(Line::from(Span::styled(
+                    prev.text.clone(),
+                    Style::default().fg(Color::DarkGray),
+                )));
+            }
 
-    if let Some(prev) = lyrics.previous() {
-        lines.push(Line::from(Span::styled(
-            prev.text.clone(),
-            Style::default().fg(Color::DarkGray),
-        )));
+            if let Some(cur) = lyrics.current() {
+                lines.push(Line::from(Span::styled(
+                    cur.text.clone(),
+                    Style::default()
+                        .fg(Color::Green)
+                        .add_modifier(Modifier::BOLD),
+                )));
+            }
+
+            if let Some(next) = lyrics.next() {
+                lines.push(Line::from(Span::styled(
+                    next.text.clone(),
+                    Style::default().fg(Color::DarkGray),
+                )));
+            }
+
+            frame.render_widget(
+                Paragraph::new(lines)
+                    .alignment(Alignment::Center)
+                    .block(block),
+                area,
+            );
+        }
     }
-
-    if let Some(cur) = lyrics.current() {
-        lines.push(Line::from(Span::styled(
-            cur.text.clone(),
-            Style::default()
-                .fg(Color::Green)
-                .add_modifier(Modifier::BOLD),
-        )));
-    }
-
-    if let Some(next) = lyrics.next() {
-        lines.push(Line::from(Span::styled(
-            next.text.clone(),
-            Style::default().fg(Color::DarkGray),
-        )));
-    }
-
-    frame.render_widget(
-        Paragraph::new(lines)
-            .alignment(Alignment::Center)
-            .block(block),
-        area,
-    );
 }
 
 fn render_lyrics_full(frame: &mut Frame, area: Rect, app: &AppState) {
@@ -211,61 +224,75 @@ fn render_lyrics_full(frame: &mut Frame, area: Rect, app: &AppState) {
                 .add_modifier(Modifier::BOLD),
         );
 
-    let Some(lyrics) = &app.lyrics else {
-        frame.render_widget(
-            Paragraph::new("No lyrics available")
-                .alignment(Alignment::Center)
-                .style(Style::default().fg(Color::DarkGray))
-                .block(block),
-            area,
-        );
-        return;
-    };
+    // handle LyricsStatus instead of Option<LyricsState>
+    match &app.lyrics {
+        LyricsStatus::Loading => {
+            frame.render_widget(
+                Paragraph::new("Loading lyrics…")
+                    .alignment(Alignment::Center)
+                    .style(Style::default().fg(Color::DarkGray)),
+                area,
+            );
+            return;
+        }
+        LyricsStatus::None => {
+            frame.render_widget(
+                Paragraph::new("No lyrics available")
+                    .alignment(Alignment::Center)
+                    .style(Style::default().fg(Color::DarkGray))
+                    .block(block),
+                area,
+            );
+            return;
+        }
+        LyricsStatus::Loaded(lyrics) => {
+            let lines = &lyrics.lines;
+            if lines.is_empty() {
+                frame.render_widget(
+                    Paragraph::new("No lyrics available")
+                        .alignment(Alignment::Center)
+                        .style(Style::default().fg(Color::DarkGray))
+                        .block(block),
+                    area,
+                );
+                return;
+            }
 
-    let lines = &lyrics.lines;
-    if lines.is_empty() {
-        frame.render_widget(
-            Paragraph::new("No lyrics available")
-                .alignment(Alignment::Center)
-                .block(block),
-            area,
-        );
-        return;
+            let center = app.lyric_scroll.min(lines.len() - 1);
+
+            // How many lines can we render inside the block?
+            let inner_height = area.height.saturating_sub(2) as usize; // minus borders
+            let half = inner_height / 2;
+
+            // Compute window bounds
+            let start = center.saturating_sub(half);
+            let end = (start + inner_height).min(lines.len());
+
+            let text: Vec<Line> = (start..end)
+                .map(|i| {
+                    let line = &lines[i];
+                    let is_active = i == center;
+
+                    let style = if is_active {
+                        Style::default()
+                            .fg(Color::Green)
+                            .add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default().fg(Color::Gray)
+                    };
+
+                    Line::from(Span::styled(line.text.clone(), style))
+                })
+                .collect();
+
+            frame.render_widget(
+                Paragraph::new(text)
+                    .alignment(Alignment::Center)
+                    .block(block),
+                area,
+            );
+        }
     }
-
-    let center = app.lyric_scroll.min(lines.len() - 1);
-
-    // How many lines can we render inside the block?
-    let inner_height = area.height.saturating_sub(2) as usize; // minus borders
-    let half = inner_height / 2;
-
-    // Compute window bounds
-    let start = center.saturating_sub(half);
-    let end = (start + inner_height).min(lines.len());
-
-    let text: Vec<Line> = (start..end)
-        .map(|i| {
-            let line = &lines[i];
-            let is_active = i == center;
-
-            let style = if is_active {
-                Style::default()
-                    .fg(Color::Green)
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                Style::default().fg(Color::Gray)
-            };
-
-            Line::from(Span::styled(line.text.clone(), style))
-        })
-        .collect();
-
-    frame.render_widget(
-        Paragraph::new(text)
-            .alignment(Alignment::Center)
-            .block(block),
-        area,
-    );
 }
 
 // -----------------------------------------------------------------------------

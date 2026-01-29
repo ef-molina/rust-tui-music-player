@@ -1,5 +1,4 @@
 use crate::metadata::model::TrackMetadata;
-
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
@@ -10,11 +9,10 @@ struct LrclibResponse {
 
 /// Fetch synced lyrics from lrclib.net.
 /// Returns raw LRC text if found.
-pub fn fetch_synced_lyrics(meta: &TrackMetadata) -> Option<String> {
-    // Respect metadata guarantees
-    let title: &str = &meta.title;
-    let artist: &str = &meta.artist;
-    let duration: f64 = meta.duration_secs;
+pub fn fetch_lrc(meta: &TrackMetadata) -> Result<Option<String>, ()> {
+    let title = &meta.title;
+    let artist = &meta.artist;
+    let duration = meta.duration_secs;
 
     let mut url = String::from("https://lrclib.net/api/get?");
     url.push_str(&format!(
@@ -24,14 +22,13 @@ pub fn fetch_synced_lyrics(meta: &TrackMetadata) -> Option<String> {
         duration.round() as u64
     ));
 
-    // Album is optional
     if let Some(album) = meta.album.as_deref() {
         url.push_str(&format!("&album_name={}", urlencoding::encode(album)));
     }
 
-    let response = ureq::get(&url).call().ok()?;
-    let body = response.into_string().ok()?;
-    let parsed: LrclibResponse = serde_json::from_str(&body).ok()?;
+    let response = ureq::get(&url).call().map_err(|_| ())?;
+    let body = response.into_string().map_err(|_| ())?;
+    let parsed: LrclibResponse = serde_json::from_str(&body).map_err(|_| ())?;
 
-    parsed.synced_lyrics
+    Ok(parsed.synced_lyrics)
 }
