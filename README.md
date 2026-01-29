@@ -196,6 +196,82 @@ If no lyrics are available, the lyrics pane displays a clear fallback message.
 
 ---
 
+## Usage
+
+### Keyboard Controls
+
+| Key       | Action                                     |
+| --------- | ------------------------------------------ |
+| ↑ / ↓     | Move selection / scroll lyrics             |
+| Enter     | Open directory or play track               |
+| Backspace | Navigate to parent directory / exit lyrics |
+| Space     | Play / pause                               |
+| ← / →     | Seek backward / forward                    |
+| s         | Stop playback                              |
+| n         | Jump to now-playing                        |
+| b         | Focus browser pane                         |
+| t         | Focus album pane                           |
+| l         | Focus lyrics pane                          |
+| [ / ]     | Previous / next track                      |
+| q         | Quit                                       |
+
+### Typical Workflow
+
+1. Launch the player
+2. Browse directories with ↑ / ↓
+3. Press Enter on an album directory
+4. Press Enter on a track to play
+5. Navigate elsewhere using the browser pane
+6. Return to the album pane — the album remains active
+7. Press `l` to view synced lyrics (if available)
+8. Control playback at any time using keyboard shortcuts
+
+---
+
+## Configuration
+
+### Music Library Path
+
+The music library root is currently hardcoded in `src/app/mod.rs`.
+
+```rust
+let root_dir = PathBuf::from(
+    std::env::var("HOME")
+        .map(|h| format!("{}/Downloads/Media/Music", h))
+        .unwrap_or_else(|_| ".".into()),
+);
+```
+
+Future versions may support configuration files or environment variables.
+
+See `DEV_README.md` for deep architecture, logging, and extension notes.
+
+---
+
+## Limitations & Known Issues
+
+- Audio-only playback (video disabled)
+- Filesystem-based albums only (no metadata-based grouping)
+- Limited metadata usage (tags parsed internally but not exposed for navigation)
+- Single mpv instance (shared IPC socket)
+- No playlists, shuffle, or repeat modes
+- Unix-only IPC (Windows support not yet implemented)
+
+---
+
+## Future Improvements
+
+- Metadata-driven browsing and display
+- Shuffle and repeat modes
+- Playlist support
+- Configuration file support
+- Lyrics enhancements (negative caching, timeouts, karaoke-style highlighting)
+- Performance improvements for large libraries
+- Windows support
+- Unit and integration tests
+
+---
+
 ## Installation & Running
 
 ### Prerequisites
