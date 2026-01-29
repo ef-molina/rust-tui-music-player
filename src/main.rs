@@ -22,6 +22,8 @@ mod event;
 mod fs;
 mod input;
 mod lyrics;
+mod lyrics_fetch;
+mod metadata;
 mod player;
 mod ui;
 
@@ -67,11 +69,15 @@ fn play_album_index(app: &mut AppState, index: usize) {
     app.album_selected = index;
     app.player.load(album_dir.join(&entry.name));
 
-    // Load lyrics for the new track
-    app.lyrics = load_for_track(&track_path)
-        .ok()
-        .flatten()
-        .map(LyricsState::new);
+    // Load lyrics for the new track (local or fetched)
+    if let Some(metadata) = crate::metadata::extract_metadata(&track_path) {
+        app.lyrics = load_for_track(&track_path, &metadata)
+            .ok()
+            .flatten()
+            .map(LyricsState::new);
+    } else {
+        app.lyrics = None;
+    }
 }
 
 fn play_next_or_stop(app: &mut AppState) {

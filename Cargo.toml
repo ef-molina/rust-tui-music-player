@@ -6,7 +6,13 @@ edition = "2024"
 [dependencies]
 crossterm = "0.27"
 ratatui = "0.26"
-serde_json = "1.0.149"
 unicode-width = "0.1"
 regex = "1"
 
+# ===== REQUIRED (already used elsewhere) =====
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# ===== Lyrics fetching =====
+ureq = "2.9"
+urlencoding = "2.1"
