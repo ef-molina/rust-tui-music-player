@@ -38,12 +38,25 @@ use crossterm::{
 };
 use event::AppEvent;
 use ratatui::{Terminal, backend::CrosstermBackend};
+use std::fs::File;
 use std::io::stdout;
-use std::sync::mpsc;
-use std::thread;
 use std::time::Duration;
+use tracing::{debug, trace, warn};
+use tracing_subscriber::EnvFilter;
 
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Initialize logging to file
+    let log_file = File::create("debug.log")?;
+
+    // Initialize tracing subscriber
+    // this must be done before any tracing macros are used
+    tracing_subscriber::fmt()
+        .with_env_filter(EnvFilter::from_default_env())
+        .with_writer(log_file)
+        .init();
+
+    debug!("logging initialized");
+
     terminal::enable_raw_mode().expect("Failed to enable raw mode");
     execute!(stdout(), EnterAlternateScreen).expect("Failed to enter alt screen");
 
@@ -55,6 +68,7 @@ fn main() {
     if let Err(err) = result {
         eprintln!("Application error: {err}");
     }
+    Ok(())
 }
 
 /// --------------------------------------------------
@@ -70,6 +84,11 @@ fn play_album_index(app: &mut AppState, index: usize) {
 
     let track_path = album_dir.join(&entry.name);
 
+    debug!(
+        path = %track_path.display(),
+        "Starting playback for track"
+    );
+
     app.album_selected = index;
     app.player.load(track_path.clone());
 
@@ -81,7 +100,20 @@ fn play_album_index(app: &mut AppState, index: usize) {
     // extract metadata once
     let metadata = match extract_metadata(&track_path) {
         Some(m) if m.is_complete() => m,
-        _ => {
+        Some(m) => {
+            warn!(
+                path = %track_path.display(),
+                confidence = ?m.confidence,
+                "Metadata incomplete — skipping lyrics fetch"
+            );
+            app.lyrics = LyricsStatus::None;
+            return;
+        }
+        None => {
+            warn!(
+                path = %track_path.display(),
+                "Failed to extract metadata — skipping lyrics fetch"
+            );
             app.lyrics = LyricsStatus::None;
             return;
         }
@@ -95,6 +127,11 @@ fn play_album_index(app: &mut AppState, index: usize) {
         }
 
         Ok(None) => {
+            debug!(
+                path = %track_path.display(),
+                "No local lyrics found — spawning background fetch"
+            );
+
             // fetch in background
             let (tx, rx) = std::sync::mpsc::channel();
             app.lyrics_rx = Some(rx);
@@ -169,30 +206,50 @@ fn run_app() -> std::io::Result<()> {
                 if let Some(rx) = &app.lyrics_rx
                     && let Ok(result) = rx.try_recv()
                 {
+                    debug!("Lyrics fetch result received");
                     match result {
                         LyricsFetchResult::RawLrc { path, contents } => {
+                            debug!(
+                                path = %path.display(),
+                                bytes = contents.len(),
+                                "Lyrics fetch succeeded"
+                            );
                             let lrc_path = path.with_extension("lrc");
                             let tmp = lrc_path.with_extension("lrc.tmp");
 
                             if std::fs::write(&tmp, contents).is_ok()
                                 && std::fs::rename(&tmp, &lrc_path).is_ok()
                             {
+                                debug!(
+                                    path = %lrc_path.display(),
+                                    "LRC file written successfully"
+                                );
                                 if let Ok(lines) = crate::lyrics::parse_lrc(&lrc_path) {
+                                    debug!(lines = lines.len(), "Parsed synced lyrics");
                                     if !lines.is_empty() {
                                         app.lyrics = LyricsStatus::Loaded(LyricsState::new(lines));
                                         app.lyric_scroll = 0;
                                     } else {
+                                        warn!("Parsed LRC contained no lyric lines");
                                         app.lyrics = LyricsStatus::None;
                                     }
                                 } else {
+                                    warn!("Failed to parse LRC file");
                                     app.lyrics = LyricsStatus::None;
                                 }
                             } else {
+                                warn!("Failed to write LRC file to disk");
                                 app.lyrics = LyricsStatus::None;
                             }
                         }
 
-                        LyricsFetchResult::NotFound | LyricsFetchResult::Failed => {
+                        LyricsFetchResult::NotFound => {
+                            debug!("Lyrics fetch returned NotFound");
+                            app.lyrics = LyricsStatus::None;
+                        }
+
+                        LyricsFetchResult::Failed => {
+                            warn!("Lyrics fetch failed");
                             app.lyrics = LyricsStatus::None;
                         }
                     }
@@ -208,12 +265,18 @@ fn run_app() -> std::io::Result<()> {
                     lyrics.update(position);
 
                     if lyrics.current_index != prev_index {
+                        trace!(
+                            index = lyrics.current_index,
+                            time = position,
+                            "Lyric line advanced"
+                        );
                         app.lyric_scroll = lyrics.current_index;
                     }
                 }
 
                 // Auto-advance when track finishes
                 if app.player.is_track_finished() {
+                    debug!("Track finished — auto advancing");
                     play_next_or_stop(&mut app);
                 }
             }
