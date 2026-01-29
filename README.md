@@ -29,6 +29,9 @@ This project emphasizes filesystem-based music organization, album-aware playbac
 - **Time-synced lyrics (.lrc)**
   Lyrics are parsed, synced to playback time, and displayed in both mini and full-screen views
 
+- **Background lyrics fetching**
+  If no local `.lrc` file exists, synced lyrics may be fetched in the background and cached
+
 - **Clean separation of concerns**
   Modular architecture with strict boundaries between UI, state, events, and player control
 
@@ -108,7 +111,7 @@ Directories with audio files but no subdirectories — including the root direct
 
 Once an album is activated, it remains active even if the user navigates elsewhere in the browser. This enables the mental model:
 
-> _Navigate the filesystem with one hand, control playback with the other._
+> Navigate the filesystem with one hand, control playback with the other.
 
 ---
 
@@ -138,6 +141,7 @@ The `Player` abstraction exposes:
 
 - Timestamped `.lrc` files are detected alongside audio files
 - Lyrics are loaded automatically when a track starts playing
+- If no local `.lrc` file exists, lyrics may be fetched in the background and cached
 - Lyrics are cleared on stop or track change
 
 Expected file layout:
@@ -177,7 +181,7 @@ If no lyrics are available, the lyrics pane displays a clear fallback message.
 
 ### Prerequisites
 
-- **Rust 1.70+** (Edition 2021)
+- **Rust 1.70+** (2021 semantics)
 - **mpv** (audio backend)
 - **Unix socket support** (Linux, macOS, or WSL2)
 
@@ -206,6 +210,12 @@ sudo pacman -S mpv
 ```bash
 git clone https://github.com/yourusername/rust-tui-music-player.git
 cd rust-tui-music-player
+cargo run
+```
+
+For release builds:
+
+```bash
 cargo build --release
 ./target/release/rust-tui-music-player
 ```
@@ -222,27 +232,27 @@ By default, the player starts with the music library rooted at:
 
 ### Keyboard Controls
 
-| Key         | Action                                     |
-| ----------- | ------------------------------------------ |
-| `↑` / `↓`   | Move selection / scroll lyrics             |
-| `Enter`     | Open directory or play track               |
-| `Backspace` | Navigate to parent directory / exit lyrics |
-| `Space`     | Play / pause                               |
-| `←` / `→`   | Seek backward / forward                    |
-| `s`         | Stop playback                              |
-| `n`         | Jump to now-playing                        |
-| `b`         | Focus browser pane                         |
-| `t`         | Focus album pane                           |
-| `l`         | Focus lyrics pane                          |
-| `[` / `]`   | Previous / next track                      |
-| `q`         | Quit                                       |
+| Key       | Action                                     |
+| --------- | ------------------------------------------ |
+| ↑ / ↓     | Move selection / scroll lyrics             |
+| Enter     | Open directory or play track               |
+| Backspace | Navigate to parent directory / exit lyrics |
+| Space     | Play / pause                               |
+| ← / →     | Seek backward / forward                    |
+| s         | Stop playback                              |
+| n         | Jump to now-playing                        |
+| b         | Focus browser pane                         |
+| t         | Focus album pane                           |
+| l         | Focus lyrics pane                          |
+| [ / ]     | Previous / next track                      |
+| q         | Quit                                       |
 
 ### Typical Workflow
 
 1. Launch the player
-2. Browse directories with `↑` / `↓`
-3. Press `Enter` on an album directory
-4. Press `Enter` on a track to play
+2. Browse directories with ↑ / ↓
+3. Press Enter on an album directory
+4. Press Enter on a track to play
 5. Navigate elsewhere using the browser pane
 6. Return to the album pane — the album remains active
 7. Press `l` to view synced lyrics (if available)
@@ -256,58 +266,38 @@ By default, the player starts with the music library rooted at:
 
 The music library root is currently hardcoded in `src/app/mod.rs`.
 
-To change it, update:
-
 ```rust
 let root_dir = PathBuf::from(
     std::env::var("HOME")
-        .map(|h| format!("{}/your/custom/path", h))
+        .map(|h| format!("{}/Downloads/Media/Music", h))
         .unwrap_or_else(|_| ".".into()),
 );
 ```
 
 Future versions may support configuration files or environment variables.
 
+See `DEV_README.md` for deep architecture, logging, and extension notes.
+
 ---
 
 ## Limitations & Known Issues
 
-- **Audio-only playback** (video disabled in mpv)
-- **Filesystem-based albums only** (no metadata-based grouping)
-- **No tag parsing** (artist, album, year not read)
-- **Single mpv instance** (shared IPC socket)
-- **No playlists or queue system**
-- **No shuffle or repeat modes**
-- **Unix-only IPC** (Windows support not yet implemented)
-
----
-
-## State Management Notes
-
-Phase 1 established explicit album state ownership:
-
-- `active_album_dir` is the authoritative album source
-- Album state persists independently of browser navigation
-- Focus changes (`b`, `t`, `l`) are pure and data-safe
-
-Phase 2 decoupled rendering from focus:
-
-- Album pane remains visible as long as an album is active
-- Browser navigation does not affect playback context
-- Visual focus indicators communicate interaction state without mutating data
-
-This architecture ensures predictable, intuitive behavior even as features grow.
+- Audio-only playback (video disabled)
+- Filesystem-based albums only (no metadata-based grouping)
+- Limited metadata usage (tags parsed internally but not exposed for navigation)
+- Single mpv instance (shared IPC socket)
+- No playlists, shuffle, or repeat modes
+- Unix-only IPC (Windows support not yet implemented)
 
 ---
 
 ## Future Improvements
 
-- Metadata parsing (ID3 / Vorbis tags)
-- Fuzzy search for albums and tracks
+- Metadata-driven browsing and display
 - Shuffle and repeat modes
 - Playlist support
 - Configuration file support
-- Lyrics enhancements (online fetch, karaoke-style highlighting, lyric-based seeking)
+- Lyrics enhancements (negative caching, timeouts, karaoke-style highlighting)
 - Performance improvements for large libraries
 - Windows support
 - Unit and integration tests
@@ -322,7 +312,6 @@ Contributions are welcome. Please follow these guidelines:
 - Keep all state mutations in the event loop
 - UI code must remain pure
 - Explain **why**, not just **what**
-- Run `cargo check` and `cargo build --release` before submitting
 - Route new behavior through `AppEvent` → `AppState` → rendering
 
 ---
