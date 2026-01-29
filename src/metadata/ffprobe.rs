@@ -47,6 +47,16 @@ pub fn extract(path: &Path) -> Option<TrackMetadata> {
         && let Some(streams) = json.get("streams").and_then(|s| s.as_array())
     {
         for stream in streams {
+            let is_attached_pic = stream
+                .get("disposition")
+                .and_then(|d| d.get("attached_pic"))
+                .and_then(|v| v.as_i64())
+                == Some(1);
+
+            if is_attached_pic {
+                continue;
+            }
+
             if let Some(tags) = stream.get("tags") {
                 if title.is_none() {
                     title = get_string(tags, "title");
