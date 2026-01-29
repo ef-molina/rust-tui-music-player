@@ -9,6 +9,11 @@ Before submitting changes, please read this document carefully.
 
 ## Project Philosophy
 
+Maintainer Authority
+
+The project maintainer has final say on design, architecture, and scope decisions.
+Discussion is welcome, but architectural direction is not decided by consensus.
+
 This is a **filesystem-first, event-driven TUI music player**.  
 It is not designed as a generic UI playground or a streaming client.
 
