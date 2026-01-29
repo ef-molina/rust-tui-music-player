@@ -6,6 +6,16 @@ This project emphasizes filesystem-based music organization, album-aware playbac
 
 ---
 
+## Screenshots
+
+### Browser, Album, and Mini Lyrics
+
+![Browser and Album View](docs/screenshots/browser.png)
+
+### Full Lyrics View
+
+![Full Lyrics View](docs/screenshots/lyrics.png)
+
 ## Features
 
 - **Keyboard-driven navigation**
@@ -30,7 +40,8 @@ This project emphasizes filesystem-based music organization, album-aware playbac
   Lyrics are parsed, synced to playback time, and displayed in both mini and full-screen views
 
 - **Background lyrics fetching**
-  If no local `.lrc` file exists, synced lyrics may be fetched in the background and cached
+  If no local `.lrc` file exists, synced lyrics may be fetched in the background using the
+  [lrclib](https://github.com/tranxuanthang/lrclib) API and cached locally
 
 - **Clean separation of concerns**
   Modular architecture with strict boundaries between UI, state, events, and player control
@@ -42,7 +53,9 @@ This project emphasizes filesystem-based music organization, album-aware playbac
 The application follows a strict **event-driven state machine** pattern:
 
 ```
+
 Input Events → Event Loop → State Mutations → UI Rendering
+
 ```
 
 ### Key Design Principles
@@ -122,7 +135,9 @@ Playback is handled by [mpv](https://mpv.io), controlled via Unix socket JSON IP
 The player is launched with:
 
 ```
+
 --no-video --idle=yes --input-ipc-server=/tmp/rust-tui-mpv.sock
+
 ```
 
 The `Player` abstraction exposes:
@@ -147,19 +162,23 @@ The `Player` abstraction exposes:
 Expected file layout:
 
 ```
+
 Music/
 ├── Album/
 │   ├── Track01.mp3
 │   ├── Track01.lrc
 │   └── Track02.mp3
+
 ```
 
 ### LRC Format
 
 ```
+
 [00:12.00]First line of lyrics
 [00:17.20]Second line of lyrics
 [00:21.10]Third line of lyrics
+
 ```
 
 ### Display Modes
@@ -228,82 +247,6 @@ By default, the player starts with the music library rooted at:
 
 ---
 
-## Usage
-
-### Keyboard Controls
-
-| Key       | Action                                     |
-| --------- | ------------------------------------------ |
-| ↑ / ↓     | Move selection / scroll lyrics             |
-| Enter     | Open directory or play track               |
-| Backspace | Navigate to parent directory / exit lyrics |
-| Space     | Play / pause                               |
-| ← / →     | Seek backward / forward                    |
-| s         | Stop playback                              |
-| n         | Jump to now-playing                        |
-| b         | Focus browser pane                         |
-| t         | Focus album pane                           |
-| l         | Focus lyrics pane                          |
-| [ / ]     | Previous / next track                      |
-| q         | Quit                                       |
-
-### Typical Workflow
-
-1. Launch the player
-2. Browse directories with ↑ / ↓
-3. Press Enter on an album directory
-4. Press Enter on a track to play
-5. Navigate elsewhere using the browser pane
-6. Return to the album pane — the album remains active
-7. Press `l` to view synced lyrics (if available)
-8. Control playback at any time using keyboard shortcuts
-
----
-
-## Configuration
-
-### Music Library Path
-
-The music library root is currently hardcoded in `src/app/mod.rs`.
-
-```rust
-let root_dir = PathBuf::from(
-    std::env::var("HOME")
-        .map(|h| format!("{}/Downloads/Media/Music", h))
-        .unwrap_or_else(|_| ".".into()),
-);
-```
-
-Future versions may support configuration files or environment variables.
-
-See `DEV_README.md` for deep architecture, logging, and extension notes.
-
----
-
-## Limitations & Known Issues
-
-- Audio-only playback (video disabled)
-- Filesystem-based albums only (no metadata-based grouping)
-- Limited metadata usage (tags parsed internally but not exposed for navigation)
-- Single mpv instance (shared IPC socket)
-- No playlists, shuffle, or repeat modes
-- Unix-only IPC (Windows support not yet implemented)
-
----
-
-## Future Improvements
-
-- Metadata-driven browsing and display
-- Shuffle and repeat modes
-- Playlist support
-- Configuration file support
-- Lyrics enhancements (negative caching, timeouts, karaoke-style highlighting)
-- Performance improvements for large libraries
-- Windows support
-- Unit and integration tests
-
----
-
 ## Contributing
 
 Contributions are welcome. Please follow these guidelines:
@@ -327,3 +270,6 @@ MIT License. See the `LICENSE` file for details.
 - Built with [ratatui](https://ratatui.rs)
 - Terminal input via [crossterm](https://github.com/crossterm-rs/crossterm)
 - Audio playback powered by [mpv](https://mpv.io)
+- Synced lyrics provided by [lrclib](https://github.com/tranxuanthang/lrclib)
+
+---
