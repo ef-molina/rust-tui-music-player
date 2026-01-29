@@ -77,3 +77,69 @@ pub fn parse_lrc(path: &Path) -> io::Result<Vec<LyricLine>> {
     });
     Ok(out)
 }
+
+// ==============================================================
+// Inline Unit Tests
+// ==============================================================
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+    use tempfile::NamedTempFile;
+
+    fn write_lrc(contents: &str) -> NamedTempFile {
+        let mut file = NamedTempFile::new().expect("temp file");
+        write!(file, "{contents}").expect("write temp lrc");
+        file
+    }
+
+    #[test]
+    fn parses_single_timestamp_line() {
+        let file = write_lrc("[00:10.00]Hello world\n");
+
+        let lines = parse_lrc(file.path()).unwrap();
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0].timestamp, 10.0);
+        assert_eq!(lines[0].text, "Hello world");
+    }
+
+    #[test]
+    fn parses_multiple_timestamps_per_line() {
+        let file = write_lrc("[00:01.00][00:02.00]Hi\n");
+
+        let lines = parse_lrc(file.path()).unwrap();
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0].timestamp, 1.0);
+        assert_eq!(lines[1].timestamp, 2.0);
+        assert_eq!(lines[0].text, "Hi");
+        assert_eq!(lines[1].text, "Hi");
+    }
+
+    #[test]
+    fn ignores_metadata_lines() {
+        let file = write_lrc("[ar:Artist]\n[ti:Title]\n[00:05.00]Lyric line\n");
+
+        let lines = parse_lrc(file.path()).unwrap();
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0].text, "Lyric line");
+    }
+
+    #[test]
+    fn sorts_lines_by_timestamp() {
+        let file = write_lrc("[00:10.00]Ten\n[00:02.00]Two\n[00:05.00]Five\n");
+
+        let lines = parse_lrc(file.path()).unwrap();
+        let texts: Vec<_> = lines.iter().map(|l| l.text.as_str()).collect();
+
+        assert_eq!(texts, vec!["Two", "Five", "Ten"]);
+    }
+
+    #[test]
+    fn skips_malformed_lines_safely() {
+        let file = write_lrc("not lyrics\n[xx:yy]bad\n[00:03.00]Good\n");
+
+        let lines = parse_lrc(file.path()).unwrap();
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0].text, "Good");
+    }
+}

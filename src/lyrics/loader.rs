@@ -46,3 +46,84 @@ fn lrc_path_for_track(track_path: &Path) -> PathBuf {
     base.set_extension("lrc");
     base
 }
+
+// ==============================================================
+// Inline Unit Tests
+// ==============================================================
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::metadata::model::MetadataConfidence;
+    use std::fs;
+    use tempfile::tempdir;
+
+    fn complete_metadata() -> TrackMetadata {
+        TrackMetadata {
+            title: "Song".into(),
+            artist: "Artist".into(),
+            album: Some("Album".into()),
+            duration_secs: 10.0,
+            confidence: MetadataConfidence::Exact,
+        }
+    }
+
+    fn incomplete_metadata() -> TrackMetadata {
+        TrackMetadata {
+            title: "".into(),
+            artist: "".into(),
+            album: None,
+            duration_secs: 0.0,
+            confidence: MetadataConfidence::FilenameOnly,
+        }
+    }
+
+    #[test]
+    fn skips_loading_when_metadata_incomplete() {
+        let dir = tempdir().unwrap();
+        let track = dir.path().join("song.mp3");
+        fs::write(&track, b"fake audio").unwrap();
+
+        let result = load_for_track(&track, &incomplete_metadata()).unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn returns_none_when_lrc_missing() {
+        let dir = tempdir().unwrap();
+        let track = dir.path().join("song.mp3");
+        fs::write(&track, b"fake audio").unwrap();
+
+        let result = load_for_track(&track, &complete_metadata()).unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn loads_valid_lrc_file() {
+        let dir = tempdir().unwrap();
+        let track = dir.path().join("song.mp3");
+        let lrc = dir.path().join("song.lrc");
+
+        fs::write(&track, b"fake audio").unwrap();
+        fs::write(&lrc, "[00:01.00]Hello\n").unwrap();
+
+        let lines = load_for_track(&track, &complete_metadata())
+            .unwrap()
+            .expect("lyrics should load");
+
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0].text, "Hello");
+    }
+
+    #[test]
+    fn empty_lrc_file_returns_none() {
+        let dir = tempdir().unwrap();
+        let track = dir.path().join("song.mp3");
+        let lrc = dir.path().join("song.lrc");
+
+        fs::write(&track, b"fake audio").unwrap();
+        fs::write(&lrc, "").unwrap();
+
+        let result = load_for_track(&track, &complete_metadata()).unwrap();
+        assert!(result.is_none());
+    }
+}
