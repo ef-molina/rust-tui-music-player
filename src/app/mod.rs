@@ -15,9 +15,29 @@
 
 use crate::lyrics::LyricsState;
 use crate::lyrics_fetch::LyricsFetchResult;
+use crate::metadata::model::TrackMetadata;
 use crate::player::Player;
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::mpsc::Receiver;
+
+/// Stable identity for lyrics caching decisions
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct LyricsCacheKey {
+    pub artist: String,
+    pub title: String,
+    pub duration_secs: u32,
+}
+
+impl LyricsCacheKey {
+    pub fn from_metadata(meta: &TrackMetadata) -> Self {
+        Self {
+            artist: meta.artist.clone(),
+            title: meta.title.clone(),
+            duration_secs: meta.duration_secs.floor() as u32,
+        }
+    }
+}
 
 /// Represent a single entry in file browser
 #[derive(Debug, Clone)]
@@ -74,10 +94,20 @@ pub struct AppState {
     /// State for synced lyrics
     pub lyrics: LyricsStatus,
     pub lyric_scroll: usize,
+
+    /// Receiver for background lyrics fetch results
     pub lyrics_rx: Option<Receiver<LyricsFetchResult>>,
+
+    /// Monotonically increasing request ID for lyrics fetches
     pub lyrics_request_id: u64,
 
-    /// Currently selected file or directory
+    /// In-memory negative cache for tracks known to have no synced lyrics
+    pub lyrics_negative_cache: HashSet<LyricsCacheKey>,
+
+    /// Cache key associated with the currently in-flight lyrics request
+    pub lyrics_pending_cache_key: Option<LyricsCacheKey>,
+
+    /// Playback state and mpv integration
     pub player: Player,
 }
 
@@ -89,6 +119,7 @@ impl AppState {
                 .map(|h| format!("{}/Downloads/Media/Music", h))
                 .unwrap_or_else(|_| ".".into()),
         );
+
         Self {
             root_dir: root_dir.clone(),
             current_dir: root_dir,
@@ -103,6 +134,8 @@ impl AppState {
             lyric_scroll: 0,
             lyrics_rx: None,
             lyrics_request_id: 0,
+            lyrics_negative_cache: HashSet::new(),
+            lyrics_pending_cache_key: None,
         }
     }
 }

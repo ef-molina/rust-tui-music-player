@@ -31,7 +31,7 @@ use crate::lyrics::{LyricsState, load_for_track};
 use crate::lyrics_fetch::LyricsFetchResult;
 use crate::lyrics_fetch::lrclib::fetch_lrc;
 use crate::metadata::extract_metadata;
-use app::{AppState, FocusPane, LyricsStatus};
+use app::{AppState, FocusPane, LyricsCacheKey, LyricsStatus};
 use crossterm::{
     execute,
     terminal::{self, EnterAlternateScreen, LeaveAlternateScreen},
@@ -49,7 +49,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let log_file = File::create("debug.log")?;
 
     // Initialize tracing subscriber
-    // this must be done before any tracing macros are used
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::from_default_env())
         .with_writer(log_file)
@@ -96,6 +95,7 @@ fn play_album_index(app: &mut AppState, index: usize) {
     app.lyrics = LyricsStatus::Loading;
     app.lyric_scroll = 0;
     app.lyrics_rx = None;
+    app.lyrics_pending_cache_key = None;
     app.lyrics_request_id += 1;
 
     // extract metadata once
@@ -120,6 +120,20 @@ fn play_album_index(app: &mut AppState, index: usize) {
         }
     };
 
+    // build cache key once
+    let cache_key = LyricsCacheKey::from_metadata(&metadata);
+
+    // negative cache gate
+    if app.lyrics_negative_cache.contains(&cache_key) {
+        debug!(
+            artist = %cache_key.artist,
+            title = %cache_key.title,
+            "Skipping lyrics fetch (negative cache hit)"
+        );
+        app.lyrics = LyricsStatus::None;
+        return;
+    }
+
     // try local lyrics
     match load_for_track(&track_path, &metadata) {
         Ok(Some(lines)) => {
@@ -133,9 +147,9 @@ fn play_album_index(app: &mut AppState, index: usize) {
                 "No local lyrics found — spawning background fetch"
             );
 
-            // fetch in background
             let (tx, rx) = std::sync::mpsc::channel();
             app.lyrics_rx = Some(rx);
+            app.lyrics_pending_cache_key = Some(cache_key.clone());
 
             let meta = metadata.clone();
             let path = track_path.clone();
@@ -225,6 +239,8 @@ fn run_app() -> std::io::Result<()> {
                                 continue;
                             }
 
+                            app.lyrics_pending_cache_key = None;
+
                             debug!(
                                 path = %path.display(),
                                 bytes = contents.len(),
@@ -252,8 +268,7 @@ fn run_app() -> std::io::Result<()> {
                             }
                         }
 
-                        LyricsFetchResult::NotFound { request_id }
-                        | LyricsFetchResult::Failed { request_id } => {
+                        LyricsFetchResult::NotFound { request_id } => {
                             if request_id != app.lyrics_request_id {
                                 trace!(
                                     request_id,
@@ -264,6 +279,30 @@ fn run_app() -> std::io::Result<()> {
                                 continue;
                             }
 
+                            if let Some(key) = app.lyrics_pending_cache_key.take() {
+                                trace!(
+                                    artist = %key.artist,
+                                    title = %key.title,
+                                    "Inserting lyrics negative cache entry"
+                                );
+                                app.lyrics_negative_cache.insert(key);
+                            }
+
+                            app.lyrics = LyricsStatus::None;
+                        }
+
+                        LyricsFetchResult::Failed { request_id } => {
+                            if request_id != app.lyrics_request_id {
+                                trace!(
+                                    request_id,
+                                    current = app.lyrics_request_id,
+                                    "Ignoring stale lyrics fetch result"
+                                );
+                                app.lyrics_rx = None;
+                                continue;
+                            }
+
+                            app.lyrics_pending_cache_key = None;
                             app.lyrics = LyricsStatus::None;
                         }
                     }
@@ -295,10 +334,7 @@ fn run_app() -> std::io::Result<()> {
 
             // -----------------------------------------------------------------
             // Focus switching
-            AppEvent::FocusBrowser => {
-                app.focus = FocusPane::Browser;
-            }
-
+            AppEvent::FocusBrowser => app.focus = FocusPane::Browser,
             AppEvent::FocusAlbum => {
                 if app.active_album_dir.is_some() || app.current_dir == app.root_dir {
                     app.focus = FocusPane::Album;
@@ -352,14 +388,8 @@ fn run_app() -> std::io::Result<()> {
 
             // -----------------------------------------------------------------
             AppEvent::NavigateUp => match app.focus {
-                FocusPane::Lyrics => {
-                    // Exit lyrics view back to album
-                    app.focus = FocusPane::Album;
-                }
-                FocusPane::Album => {
-                    // Exit album mode
-                    app.focus = FocusPane::Browser;
-                }
+                FocusPane::Lyrics => app.focus = FocusPane::Album,
+                FocusPane::Album => app.focus = FocusPane::Browser,
                 FocusPane::Browser => {
                     if app.current_dir != app.root_dir
                         && let Some(parent) = app.current_dir.parent()
@@ -376,6 +406,7 @@ fn run_app() -> std::io::Result<()> {
                     }
                 }
             },
+
             // -----------------------------------------------------------------
             AppEvent::JumpToNowPlaying => {
                 let Some(track_path) = &app.player.current_track else {
@@ -401,7 +432,6 @@ fn run_app() -> std::io::Result<()> {
                     app.focus = FocusPane::Album;
                 }
 
-                // Browser shows sibling albums, not album contents
                 let browser_dir = album_dir.parent().unwrap_or(&app.root_dir);
                 app.current_dir = browser_dir.to_path_buf();
                 app.browser_entries = fs::read_dir(&app.current_dir).unwrap_or_default();
@@ -409,10 +439,9 @@ fn run_app() -> std::io::Result<()> {
             }
 
             // -----------------------------------------------------------------
-            // Player controls (focus-dependent)
+            // Player controls
             AppEvent::Activate => match app.focus {
                 FocusPane::Browser => {
-                    // browser activation uses directories only
                     let browser_dirs: Vec<_> = app
                         .browser_entries
                         .iter()
@@ -430,13 +459,11 @@ fn run_app() -> std::io::Result<()> {
                     }
 
                     if let Ok(Some(tracks)) = fs::detect_album(&new_path) {
-                        // Album detected — DO NOT navigate browser
                         app.active_album_dir = Some(new_path);
                         app.album_entries = tracks;
                         app.album_selected = 0;
                         app.focus = FocusPane::Album;
                     } else {
-                        // Normal directory navigation — DO NOT clear album
                         app.current_dir = new_path;
                         app.browser_entries = fs::read_dir(&app.current_dir).unwrap_or_default();
                         app.selected_index = 0;
@@ -447,11 +474,9 @@ fn run_app() -> std::io::Result<()> {
                     let index = app.album_selected;
                     play_album_index(&mut app, index);
                 }
-                FocusPane::Lyrics => {
-                    // No-op: Enter does nothing in lyrics view
-                }
+                FocusPane::Lyrics => {}
             },
-            // -----------------------------------------------------------------
+
             AppEvent::TogglePause => app.player.toggle_pause(),
             AppEvent::SeekForward => app.player.seek(5),
             AppEvent::SeekBackward => app.player.seek(-5),
@@ -459,9 +484,7 @@ fn run_app() -> std::io::Result<()> {
                 app.player.stop();
                 app.lyrics = LyricsStatus::None;
             }
-            AppEvent::NextTrack => {
-                play_next_or_stop(&mut app);
-            }
+            AppEvent::NextTrack => play_next_or_stop(&mut app),
             AppEvent::PrevTrack => {
                 let restart_current = app
                     .player
