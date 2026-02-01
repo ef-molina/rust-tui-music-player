@@ -75,6 +75,7 @@ pub struct AppState {
     pub lyrics: LyricsStatus,
     pub lyric_scroll: usize,
     pub lyrics_rx: Option<Receiver<LyricsFetchResult>>,
+    pub lyrics_request_id: u64,
 
     /// Currently selected file or directory
     pub player: Player,
@@ -101,6 +102,7 @@ impl AppState {
             lyrics: LyricsStatus::None,
             lyric_scroll: 0,
             lyrics_rx: None,
+            lyrics_request_id: 0,
         }
     }
 }

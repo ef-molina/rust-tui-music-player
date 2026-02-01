@@ -19,13 +19,14 @@ pub enum LyricsFetchResult {
     /// Raw LRC text fetched from provider.
     /// Writing + parsing happens on the main thread.
     RawLrc {
+        request_id: u64,
         path: std::path::PathBuf,
         contents: String,
     },
 
     /// Provider responded but no synced lyrics exist.
-    NotFound,
+    NotFound { request_id: u64 },
 
     /// Network, parsing, or unexpected failure.
-    Failed,
+    Failed { request_id: u64 },
 }
