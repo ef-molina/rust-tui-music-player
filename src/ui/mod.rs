@@ -43,6 +43,16 @@ fn format_time(seconds: Option<f64>) -> String {
     format!("{:02}:{:02}", secs / 60, secs % 60)
 }
 
+fn display_album_name(raw: &str) -> &str {
+    if let Some((year, rest)) = raw.split_once(" - ")
+        && year.len() == 4
+        && year.chars().all(|c| c.is_ascii_digit())
+    {
+        return rest;
+    }
+    raw
+}
+
 // -----------------------------------------------------------------------------
 // Pane renderers
 // -----------------------------------------------------------------------------
@@ -51,7 +61,10 @@ fn render_browser(frame: &mut Frame, area: Rect, app: &AppState) {
         .browser_entries
         .iter()
         .filter(|e| e.is_dir)
-        .map(|e| ListItem::new(format!("📁 {}", e.name)))
+        .map(|e| {
+            let display = display_album_name(&e.name);
+            ListItem::new(format!("📁 {}", display))
+        })
         .collect();
 
     let block = Block::default()
