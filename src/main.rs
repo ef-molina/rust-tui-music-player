@@ -96,6 +96,7 @@ fn play_album_index(app: &mut AppState, index: usize) {
     app.lyrics = LyricsStatus::Loading;
     app.lyric_scroll = 0;
     app.lyrics_rx = None;
+    app.lyrics_request_id += 1;
 
     // extract metadata once
     let metadata = match extract_metadata(&track_path) {
@@ -138,15 +139,17 @@ fn play_album_index(app: &mut AppState, index: usize) {
 
             let meta = metadata.clone();
             let path = track_path.clone();
+            let request_id = app.lyrics_request_id;
 
             std::thread::spawn(move || {
                 let result = match fetch_lrc(&meta) {
                     Ok(Some(lrc_text)) => LyricsFetchResult::RawLrc {
+                        request_id,
                         path,
                         contents: lrc_text,
                     },
-                    Ok(None) => LyricsFetchResult::NotFound,
-                    Err(_) => LyricsFetchResult::Failed,
+                    Ok(None) => LyricsFetchResult::NotFound { request_id },
+                    Err(_) => LyricsFetchResult::Failed { request_id },
                 };
 
                 let _ = tx.send(result);
@@ -206,55 +209,64 @@ fn run_app() -> std::io::Result<()> {
                 if let Some(rx) = &app.lyrics_rx
                     && let Ok(result) = rx.try_recv()
                 {
-                    debug!("Lyrics fetch result received");
                     match result {
-                        LyricsFetchResult::RawLrc { path, contents } => {
+                        LyricsFetchResult::RawLrc {
+                            request_id,
+                            path,
+                            contents,
+                        } => {
+                            if request_id != app.lyrics_request_id {
+                                trace!(
+                                    request_id,
+                                    current = app.lyrics_request_id,
+                                    "Ignoring stale lyrics fetch result"
+                                );
+                                app.lyrics_rx = None;
+                                continue;
+                            }
+
                             debug!(
                                 path = %path.display(),
                                 bytes = contents.len(),
                                 "Lyrics fetch succeeded"
                             );
+
                             let lrc_path = path.with_extension("lrc");
                             let tmp = lrc_path.with_extension("lrc.tmp");
 
                             if std::fs::write(&tmp, contents).is_ok()
                                 && std::fs::rename(&tmp, &lrc_path).is_ok()
                             {
-                                debug!(
-                                    path = %lrc_path.display(),
-                                    "LRC file written successfully"
-                                );
                                 if let Ok(lines) = crate::lyrics::parse_lrc(&lrc_path) {
-                                    debug!(lines = lines.len(), "Parsed synced lyrics");
                                     if !lines.is_empty() {
                                         app.lyrics = LyricsStatus::Loaded(LyricsState::new(lines));
                                         app.lyric_scroll = 0;
                                     } else {
-                                        warn!("Parsed LRC contained no lyric lines");
                                         app.lyrics = LyricsStatus::None;
                                     }
                                 } else {
-                                    warn!("Failed to parse LRC file");
                                     app.lyrics = LyricsStatus::None;
                                 }
                             } else {
-                                warn!("Failed to write LRC file to disk");
                                 app.lyrics = LyricsStatus::None;
                             }
                         }
 
-                        LyricsFetchResult::NotFound => {
-                            debug!("Lyrics fetch returned NotFound");
-                            app.lyrics = LyricsStatus::None;
-                        }
+                        LyricsFetchResult::NotFound { request_id }
+                        | LyricsFetchResult::Failed { request_id } => {
+                            if request_id != app.lyrics_request_id {
+                                trace!(
+                                    request_id,
+                                    current = app.lyrics_request_id,
+                                    "Ignoring stale lyrics fetch result"
+                                );
+                                app.lyrics_rx = None;
+                                continue;
+                            }
 
-                        LyricsFetchResult::Failed => {
-                            warn!("Lyrics fetch failed");
                             app.lyrics = LyricsStatus::None;
                         }
                     }
-
-                    app.lyrics_rx = None;
                 }
 
                 // Update lyrics state
