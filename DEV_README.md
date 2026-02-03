@@ -304,17 +304,24 @@ RUST_LOG=trace cargo run
 
 ### High Priority
 
-- No negative lyrics cache
-- No active cancellation for in-flight lyrics fetches (stale results are ignored safely)
+- No active cancellation for in-flight lyrics fetches (results are intentionally handled instead)
 - Silent mpv IPC failures
 - Hardcoded music root directory
 
 ### Medium / Low
 
 - Aggressive metrics polling (10ms)
-- Orphaned `.lrc.tmp` files on crash
+- No active cancellation of in-flight fetches (stale results are safely handled)
+- Orphaned `.lrc.tmp` files possible on crash
 - No dependency validation
 - No UI error reporting
+
+**Implemented behavior**:
+
+- In-flight lyrics fetches are not cancelled when switching tracks
+- Successful fetches always write `.lrc` sidecar files, even if the user navigates away
+- Stale fetch results never update UI state, but are persisted for future playback
+- Failed fetches are recorded in an in-memory negative cache to avoid repeated network requests
 
 ---
 
@@ -322,7 +329,8 @@ RUST_LOG=trace cargo run
 
 ### Near-Term
 
-- In-memory negative cache for failed lyrics lookups
+- Optional persistence for lyrics cache (disk-level reuse)
+- User-configurable control over automatic lyrics downloading
 - mpv socket lifecycle fixes
 
 ### Medium-Term
