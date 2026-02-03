@@ -8,11 +8,19 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ## [v0.1.1] – Unreleased
 
+### Added
+
+#### Lyrics
+
+- In-memory negative cache to avoid repeated network fetches for tracks with no synced lyrics
+- Automatic background writing of fetched lyrics to `.lrc` files, even if the user skips tracks before fetch completion
+- Deterministic handling of stale lyrics fetches without blocking the main event loop
+
 ### Planned
 
+- Optional persistent lyrics cache (e.g. `~/.cache/rust-tui-music-player`)
+- User-configurable controls for automatic lyrics downloading/writing
 - Improvements to album and directory name filtering
-- More robust lyrics fetching and caching behavior
-- Better handling of mpv lifecycle and cleanup on exit
 - Internal robustness and bug fixes identified after v0.1.0 release
 
 This release focuses on polish, correctness, and addressing known limitations
@@ -69,8 +77,7 @@ before wider distribution.
 - No streaming or remote file support
 - Music root directory is currently static
 - Limited metadata display beyond basic track and album information
-- No negative cache for failed lyrics fetches
-- No cancellation of in-flight lyrics fetch when switching tracks
+- In-flight lyrics fetches are not cancelled when switching tracks (results are safely handled instead)
 - Unix-only support (mpv IPC via Unix sockets)
 
 ---
