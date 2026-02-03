@@ -94,7 +94,7 @@ fn play_album_index(app: &mut AppState, index: usize) {
     // reset lyrics state immediately
     app.lyrics = LyricsStatus::Loading;
     app.lyric_scroll = 0;
-    app.lyrics_rx = None;
+    let tx = app.lyrics_tx.clone();
     app.lyrics_pending_cache_key = None;
     app.lyrics_request_id += 1;
 
@@ -147,13 +147,19 @@ fn play_album_index(app: &mut AppState, index: usize) {
                 "No local lyrics found — spawning background fetch"
             );
 
-            let (tx, rx) = std::sync::mpsc::channel();
-            app.lyrics_rx = Some(rx);
             app.lyrics_pending_cache_key = Some(cache_key.clone());
 
             let meta = metadata.clone();
             let path = track_path.clone();
             let request_id = app.lyrics_request_id;
+
+            // LOG: spawn fetch thread
+            debug!(
+                request_id = app.lyrics_request_id,
+                artist = %cache_key.artist,
+                title = %cache_key.title,
+                "Spawning lyrics fetch"
+            );
 
             std::thread::spawn(move || {
                 let result = match fetch_lrc(&meta) {
@@ -190,7 +196,8 @@ fn play_next_or_stop(app: &mut AppState) {
 /// Main application loop
 /// --------------------------------------------------
 fn run_app() -> std::io::Result<()> {
-    let mut app = AppState::new();
+    let (lyrics_tx, lyrics_rx) = std::sync::mpsc::channel();
+    let mut app = AppState::new(lyrics_rx, lyrics_tx);
     let backend = CrosstermBackend::new(stdout());
     let mut terminal = Terminal::new(backend)?;
 
@@ -220,50 +227,59 @@ fn run_app() -> std::io::Result<()> {
                 app.player.poll_metrics();
 
                 // Resolve background lyrics fetch (non-blocking)
-                if let Some(rx) = &app.lyrics_rx
-                    && let Ok(result) = rx.try_recv()
-                {
+                if let Ok(result) = app.lyrics_rx.try_recv() {
                     match result {
                         LyricsFetchResult::RawLrc {
                             request_id,
                             path,
                             contents,
                         } => {
-                            if request_id != app.lyrics_request_id {
-                                trace!(
-                                    request_id,
-                                    current = app.lyrics_request_id,
-                                    "Ignoring stale lyrics fetch result"
-                                );
-                                app.lyrics_rx = None;
-                                continue;
-                            }
-
-                            app.lyrics_pending_cache_key = None;
+                            let is_current = request_id == app.lyrics_request_id;
 
                             debug!(
                                 path = %path.display(),
                                 bytes = contents.len(),
+                                current = is_current,
                                 "Lyrics fetch succeeded"
                             );
 
+                            // Always write .lrc file (even if stale)
                             let lrc_path = path.with_extension("lrc");
                             let tmp = lrc_path.with_extension("lrc.tmp");
 
-                            if std::fs::write(&tmp, contents).is_ok()
+                            if std::fs::write(&tmp, &contents).is_ok()
                                 && std::fs::rename(&tmp, &lrc_path).is_ok()
                             {
-                                if let Ok(lines) = crate::lyrics::parse_lrc(&lrc_path) {
-                                    if !lines.is_empty() {
-                                        app.lyrics = LyricsStatus::Loaded(LyricsState::new(lines));
-                                        app.lyric_scroll = 0;
+                                debug!(
+                                    path = %lrc_path.display(),
+                                    current = is_current,
+                                    "Lyrics written to sidecar file"
+                                );
+
+                                // Only update UI if this is the current track
+                                if is_current {
+                                    app.lyrics_pending_cache_key = None;
+
+                                    if let Ok(lines) = crate::lyrics::parse_lrc(&lrc_path) {
+                                        if !lines.is_empty() {
+                                            app.lyrics =
+                                                LyricsStatus::Loaded(LyricsState::new(lines));
+                                            app.lyric_scroll = 0;
+                                        } else {
+                                            app.lyrics = LyricsStatus::None;
+                                        }
                                     } else {
                                         app.lyrics = LyricsStatus::None;
                                     }
                                 } else {
-                                    app.lyrics = LyricsStatus::None;
+                                    trace!(
+                                        request_id,
+                                        current = app.lyrics_request_id,
+                                        "Stale lyrics fetch — saved to disk only"
+                                    );
                                 }
-                            } else {
+                            } else if is_current {
+                                // Write failed AND this was current
                                 app.lyrics = LyricsStatus::None;
                             }
                         }
@@ -275,7 +291,6 @@ fn run_app() -> std::io::Result<()> {
                                     current = app.lyrics_request_id,
                                     "Ignoring stale lyrics fetch result"
                                 );
-                                app.lyrics_rx = None;
                                 continue;
                             }
 
@@ -298,7 +313,6 @@ fn run_app() -> std::io::Result<()> {
                                     current = app.lyrics_request_id,
                                     "Ignoring stale lyrics fetch result"
                                 );
-                                app.lyrics_rx = None;
                                 continue;
                             }
 
