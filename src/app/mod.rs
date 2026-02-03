@@ -19,7 +19,7 @@ use crate::metadata::model::TrackMetadata;
 use crate::player::Player;
 use std::collections::HashSet;
 use std::path::PathBuf;
-use std::sync::mpsc::Receiver;
+use std::sync::mpsc::{Receiver, Sender};
 
 /// Stable identity for lyrics caching decisions
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -95,8 +95,9 @@ pub struct AppState {
     pub lyrics: LyricsStatus,
     pub lyric_scroll: usize,
 
-    /// Receiver for background lyrics fetch results
-    pub lyrics_rx: Option<Receiver<LyricsFetchResult>>,
+    /// Sender and receiver for background lyrics fetch results
+    pub lyrics_rx: Receiver<LyricsFetchResult>,
+    pub lyrics_tx: Sender<LyricsFetchResult>,
 
     /// Monotonically increasing request ID for lyrics fetches
     pub lyrics_request_id: u64,
@@ -113,7 +114,10 @@ pub struct AppState {
 
 impl AppState {
     /// Create a new application state with default values.
-    pub fn new() -> Self {
+    pub fn new(
+        lyrics_rx: Receiver<LyricsFetchResult>,
+        lyrics_tx: Sender<LyricsFetchResult>,
+    ) -> Self {
         let root_dir = PathBuf::from(
             std::env::var("HOME")
                 .map(|h| format!("{}/Downloads/Media/Music", h))
@@ -132,10 +136,11 @@ impl AppState {
             player: Player::new(),
             lyrics: LyricsStatus::None,
             lyric_scroll: 0,
-            lyrics_rx: None,
             lyrics_request_id: 0,
             lyrics_negative_cache: HashSet::new(),
             lyrics_pending_cache_key: None,
+            lyrics_rx,
+            lyrics_tx,
         }
     }
 }
