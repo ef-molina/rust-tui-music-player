@@ -95,6 +95,9 @@ pub struct AppState {
     pub lyrics: LyricsStatus,
     pub lyric_scroll: usize,
 
+    /// UI tick used for render-time effects (like blinking cursor, marquee, etc)
+    pub ui_tick: u64,
+    pub selection_anchor_tick: u64,
     /// Sender and receiver for background lyrics fetch results
     pub lyrics_rx: Receiver<LyricsFetchResult>,
     pub lyrics_tx: Sender<LyricsFetchResult>,
@@ -141,6 +144,8 @@ impl AppState {
             lyrics_pending_cache_key: None,
             lyrics_rx,
             lyrics_tx,
+            ui_tick: 0,
+            selection_anchor_tick: 0,
         }
     }
 }

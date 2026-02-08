@@ -224,6 +224,8 @@ fn run_app() -> std::io::Result<()> {
             }
 
             AppEvent::Tick => {
+                // Update UI tick
+                app.ui_tick = app.ui_tick.wrapping_add(1);
                 app.player.poll_metrics();
 
                 // Resolve background lyrics fetch (non-blocking)
@@ -367,11 +369,13 @@ fn run_app() -> std::io::Result<()> {
                 FocusPane::Browser => {
                     if app.selected_index > 0 {
                         app.selected_index -= 1;
+                        app.selection_anchor_tick = app.ui_tick;
                     }
                 }
                 FocusPane::Album => {
                     if app.album_selected > 0 {
                         app.album_selected -= 1;
+                        app.selection_anchor_tick = app.ui_tick;
                     }
                 }
                 FocusPane::Lyrics => {
@@ -384,11 +388,13 @@ fn run_app() -> std::io::Result<()> {
                     let dir_count = app.browser_entries.iter().filter(|e| e.is_dir).count();
                     if app.selected_index + 1 < dir_count {
                         app.selected_index += 1;
+                        app.selection_anchor_tick = app.ui_tick;
                     }
                 }
                 FocusPane::Album => {
                     if app.album_selected + 1 < app.album_entries.len() {
                         app.album_selected += 1;
+                        app.selection_anchor_tick = app.ui_tick;
                     }
                 }
                 FocusPane::Lyrics => {
@@ -411,6 +417,7 @@ fn run_app() -> std::io::Result<()> {
                         app.current_dir = parent.to_path_buf();
                         app.browser_entries = fs::read_dir(&app.current_dir).unwrap_or_default();
                         app.selected_index = 0;
+                        app.selection_anchor_tick = app.ui_tick;
 
                         if let Ok(Some(tracks)) = fs::detect_loose_tracks(&app.current_dir) {
                             app.active_album_dir = Some(app.current_dir.clone());
@@ -450,6 +457,7 @@ fn run_app() -> std::io::Result<()> {
                 app.current_dir = browser_dir.to_path_buf();
                 app.browser_entries = fs::read_dir(&app.current_dir).unwrap_or_default();
                 app.selected_index = 0;
+                app.selection_anchor_tick = app.ui_tick;
             }
 
             // -----------------------------------------------------------------
@@ -481,6 +489,7 @@ fn run_app() -> std::io::Result<()> {
                         app.current_dir = new_path;
                         app.browser_entries = fs::read_dir(&app.current_dir).unwrap_or_default();
                         app.selected_index = 0;
+                        app.selection_anchor_tick = app.ui_tick;
                     }
                 }
 

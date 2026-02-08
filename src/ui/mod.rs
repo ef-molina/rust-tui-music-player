@@ -53,6 +53,63 @@ fn display_album_name(raw: &str) -> &str {
     raw
 }
 
+fn marquee_text(text: &str, max_width: usize, ui_tick: u64, anchor_tick: u64) -> String {
+    let text_width = UnicodeWidthStr::width(text);
+    if text_width <= max_width {
+        return text.to_string();
+    }
+
+    let gap = "   ";
+    let full = format!("{text}{gap}");
+    let full_width = UnicodeWidthStr::width(full.as_str());
+
+    // ----- timing (human-readable) -----
+    let tick_rate = 100u64; // ~100 ticks/sec
+    let start_delay = tick_rate / 2; // 0.5s
+    let end_delay = tick_rate / 2; // 0.5s
+    let speed = 8u64; // ticks per column (higher = slower)
+
+    let max_offset = full_width.saturating_sub(max_width) as u64;
+    let scroll_duration = max_offset * speed;
+    let total_duration = start_delay + scroll_duration + end_delay;
+
+    let elapsed = (ui_tick.saturating_sub(anchor_tick)) % total_duration;
+
+    let offset = if elapsed < start_delay {
+        // start pause
+        0
+    } else if elapsed < start_delay + scroll_duration {
+        // scrolling phase
+        (elapsed - start_delay) / speed
+    } else {
+        // end pause (hold final position)
+        max_offset
+    };
+
+    let offset = offset.min(max_offset) as usize;
+
+    // ----- render window -----
+    let mut out = String::new();
+    let mut skipped = 0;
+
+    for ch in full.chars() {
+        let w = UnicodeWidthStr::width(ch.to_string().as_str());
+
+        if skipped + w <= offset {
+            skipped += w;
+            continue;
+        }
+
+        if UnicodeWidthStr::width(out.as_str()) + w > max_width {
+            break;
+        }
+
+        out.push(ch);
+    }
+
+    out
+}
+
 // -----------------------------------------------------------------------------
 // Pane renderers
 // -----------------------------------------------------------------------------
@@ -60,15 +117,24 @@ fn render_browser(frame: &mut Frame, area: Rect, app: &AppState) {
     let items: Vec<ListItem> = app
         .browser_entries
         .iter()
-        .filter(|e| e.is_dir)
-        .map(|e| {
+        .enumerate()
+        .filter(|(_, e)| e.is_dir)
+        .map(|(i, e)| {
             let display = display_album_name(&e.name);
-            ListItem::new(format!("📁 {}", display))
+            let available = area.width.saturating_sub(6) as usize;
+
+            let name = if app.focus == FocusPane::Browser && i == app.selected_index {
+                marquee_text(display, available, app.ui_tick, app.selection_anchor_tick)
+            } else {
+                display.to_string()
+            };
+
+            ListItem::new(format!("📁 {}", name))
         })
         .collect();
 
     let block = Block::default()
-        .title("Browser")
+        .title("[B]rowser")
         .borders(Borders::ALL)
         .border_style(if app.focus == FocusPane::Browser {
             Style::default()
@@ -101,12 +167,12 @@ fn render_album(frame: &mut Frame, area: Rect, app: &AppState) {
         (
             dir.file_name()
                 .and_then(|s| s.to_str())
-                .unwrap_or("Album")
+                .unwrap_or("[T]racks")
                 .to_string(),
             &app.album_entries,
         )
     } else {
-        ("No Album".to_string(), &Vec::new())
+        ("[T]racks".to_string(), &Vec::new())
     };
 
     let playing_name = app
@@ -118,7 +184,8 @@ fn render_album(frame: &mut Frame, area: Rect, app: &AppState) {
 
     let items: Vec<ListItem> = tracks
         .iter()
-        .map(|e| {
+        .enumerate()
+        .map(|(i, e)| {
             let is_playing = playing_name.map(|n| n == e.name).unwrap_or(false);
             let icon = if is_playing { "▶ " } else { "🎵 " };
 
@@ -130,7 +197,16 @@ fn render_album(frame: &mut Frame, area: Rect, app: &AppState) {
                 Style::default()
             };
 
-            ListItem::new(format!("{icon}{}", e.name)).style(style)
+            // ListItem::new(format!("{icon}{}", e.name)).style(style)
+            let available = area.width.saturating_sub(6) as usize;
+
+            let name = if app.focus == FocusPane::Album && i == app.album_selected {
+                marquee_text(&e.name, available, app.ui_tick, app.selection_anchor_tick)
+            } else {
+                e.name.clone()
+            };
+
+            ListItem::new(format!("{icon}{name}")).style(style)
         })
         .collect();
 
@@ -174,7 +250,7 @@ fn render_album(frame: &mut Frame, area: Rect, app: &AppState) {
 // Mini lyric renderer
 // -----------------------------------------------------------------------------
 fn render_lyrics_mini(frame: &mut Frame, area: Rect, app: &AppState) {
-    let block = Block::default().title("Lyrics").borders(Borders::ALL);
+    let block = Block::default().title("[L]yrics").borders(Borders::ALL);
 
     let paragraph = match &app.lyrics {
         LyricsStatus::Loading => Paragraph::new("Loading lyrics…")
@@ -227,7 +303,7 @@ fn render_lyrics_mini(frame: &mut Frame, area: Rect, app: &AppState) {
 // -----------------------------------------------------------------------------
 fn render_lyrics_full(frame: &mut Frame, area: Rect, app: &AppState) {
     let block = Block::default()
-        .title("Lyrics")
+        .title("[L]yrics")
         .borders(Borders::ALL)
         .border_style(
             Style::default()
@@ -367,7 +443,9 @@ pub fn draw(frame: &mut Frame, app: &AppState) {
     // -------------------------------------------------------------------------
     // Footer
     // -------------------------------------------------------------------------
-    let footer_block = Block::default().borders(Borders::ALL).title("Now Playing");
+    let footer_block = Block::default()
+        .borders(Borders::ALL)
+        .title("[N]ow Playing");
     let footer_inner = footer_block.inner(chunks[2]);
     frame.render_widget(footer_block, chunks[2]);
 
