@@ -75,6 +75,17 @@ pub enum LyricsStatus {
     Loaded(LyricsState),
 }
 
+#[derive(Debug, Clone)]
+pub struct CommandState {
+    pub buffer: String,
+    pub cursor: usize,
+}
+
+pub enum InputMode {
+    Normal,
+    Command(CommandState),
+}
+
 pub struct AppState {
     /// Root directory of the file browser
     pub root_dir: PathBuf,
@@ -126,6 +137,9 @@ pub struct AppState {
 
     /// Currently playing track information
     pub now_playing: Option<NowPlaying>,
+
+    /// Current input mode (normal vs command)
+    pub input_mode: InputMode,
 }
 
 impl AppState {
@@ -160,6 +174,7 @@ impl AppState {
             ui_tick: 0,
             selection_anchor_tick: 0,
             now_playing: None,
+            input_mode: InputMode::Normal,
         }
     }
 

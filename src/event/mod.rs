@@ -11,7 +11,7 @@
 //! - The event loop reacts to events and mutates `AppState`
 //! - This keeps UI, input, and player logic decoupled
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AppEvent {
     /// Request to quit the application.
     Quit,
@@ -38,4 +38,11 @@ pub enum AppEvent {
     FocusBrowser,
     FocusAlbum,
     FocusLyrics,
+
+    // Command mode events
+    EnterCommandMode,
+    ExitCommandMode,
+    CommandChar(char),
+    CommandBackspace,
+    SubmitCommand,
 }

@@ -20,7 +20,7 @@ use ratatui::{
     widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph},
 };
 
-use crate::app::{AppState, FocusPane, LyricsStatus};
+use crate::app::{AppState, FocusPane, InputMode, LyricsStatus};
 use crate::player::PlaybackState;
 use unicode_width::UnicodeWidthStr;
 
@@ -143,6 +143,31 @@ fn wrap_text_to_width(text: &str, max_width: usize) -> Vec<String> {
     }
 
     lines
+}
+
+fn render_command_bar(frame: &mut Frame, area: Rect, app: &AppState) {
+    use crate::app::InputMode;
+
+    let InputMode::Command(cmd) = &app.input_mode else {
+        return;
+    };
+
+    let cursor_visible = (app.ui_tick / 25) % 2 == 0;
+    let cursor = if cursor_visible { "█" } else { " " };
+
+    let text = format!("/{buffer}{cursor}", buffer = cmd.buffer, cursor = cursor,);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Yellow))
+        .title("Command");
+
+    frame.render_widget(
+        Paragraph::new(text)
+            .style(Style::default().fg(Color::White))
+            .block(block),
+        area,
+    );
 }
 
 // -----------------------------------------------------------------------------
@@ -453,15 +478,26 @@ pub fn draw(frame: &mut Frame, app: &AppState) {
     let size = frame.size();
     frame.render_widget(Clear, size);
 
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(3), // header
-            Constraint::Min(1),    // body
-            Constraint::Length(7), // footer
-        ])
-        .split(size);
-
+    let chunks = if matches!(app.input_mode, InputMode::Command(_)) {
+        Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(3), // header
+                Constraint::Min(1),    // body
+                Constraint::Length(3), // command bar
+                Constraint::Length(7), // footer
+            ])
+            .split(size)
+    } else {
+        Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(3), // header
+                Constraint::Min(1),    // body
+                Constraint::Length(7), // footer
+            ])
+            .split(size)
+    };
     // -------------------------------------------------------------------------
     // Header
     // -------------------------------------------------------------------------
@@ -523,11 +559,20 @@ pub fn draw(frame: &mut Frame, app: &AppState) {
     // -------------------------------------------------------------------------
     // Footer
     // -------------------------------------------------------------------------
+
+    // If in command mode, we need to render the command bar above the footer
+    let footer_index = if matches!(app.input_mode, InputMode::Command(_)) {
+        render_command_bar(frame, chunks[2], app);
+        3
+    } else {
+        2
+    };
+
     let footer_block = Block::default()
         .borders(Borders::ALL)
         .title("[N]ow Playing");
-    let footer_inner = footer_block.inner(chunks[2]);
-    frame.render_widget(footer_block, chunks[2]);
+    let footer_inner = footer_block.inner(chunks[footer_index]);
+    frame.render_widget(footer_block, chunks[footer_index]);
 
     let footer_rows = Layout::default()
         .direction(Direction::Vertical)
