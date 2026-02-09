@@ -64,6 +64,11 @@ mod tests {
             album: Some("Album".into()),
             duration_secs: 10.0,
             confidence: MetadataConfidence::Exact,
+            date: None,
+            track: None,
+            purl: None,
+            comment: None,
+            synopsis: None,
         }
     }
 
@@ -74,6 +79,11 @@ mod tests {
             album: None,
             duration_secs: 0.0,
             confidence: MetadataConfidence::FilenameOnly,
+            date: None,
+            track: None,
+            purl: None,
+            comment: None,
+            synopsis: None,
         }
     }
 

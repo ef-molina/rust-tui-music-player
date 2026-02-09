@@ -28,12 +28,25 @@ pub fn extract(path: &Path) -> Option<TrackMetadata> {
     let mut album = None;
     let mut duration = None;
 
+    // New optional fields
+    let mut date = None;
+    let mut track = None;
+    let mut purl = None;
+    let mut comment = None;
+    let mut synopsis = None;
+
     // Prefer format-level tags
     if let Some(format) = json.get("format") {
         if let Some(tags) = format.get("tags") {
             title = get_string(tags, "title");
             artist = get_string(tags, "artist");
             album = get_string(tags, "album");
+
+            date = get_string(tags, "date").or_else(|| get_string(tags, "DATE"));
+            track = get_string(tags, "track").or_else(|| get_string(tags, "tracknumber"));
+            purl = get_string(tags, "purl");
+            comment = get_string(tags, "comment");
+            synopsis = get_string(tags, "synopsis");
         }
 
         duration = format
@@ -67,6 +80,21 @@ pub fn extract(path: &Path) -> Option<TrackMetadata> {
                 if album.is_none() {
                     album = get_string(tags, "album");
                 }
+                if date.is_none() {
+                    date = get_string(tags, "date").or_else(|| get_string(tags, "DATE"));
+                }
+                if track.is_none() {
+                    track = get_string(tags, "track").or_else(|| get_string(tags, "tracknumber"));
+                }
+                if purl.is_none() {
+                    purl = get_string(tags, "purl");
+                }
+                if comment.is_none() {
+                    comment = get_string(tags, "comment");
+                }
+                if synopsis.is_none() {
+                    synopsis = get_string(tags, "synopsis");
+                }
             }
         }
     }
@@ -78,7 +106,14 @@ pub fn extract(path: &Path) -> Option<TrackMetadata> {
         artist: artist.unwrap_or_default(),
         album,
         duration_secs,
-        // Confidence is assigned later by the orchestrator
+
+        date,
+        track,
+        purl,
+        comment,
+        synopsis,
+
+        // Confidence assigned later by orchestrator
         confidence: MetadataConfidence::FilenameOnly,
     })
 }

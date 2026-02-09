@@ -38,13 +38,44 @@ use crossterm::{
 };
 use event::AppEvent;
 use ratatui::{Terminal, backend::CrosstermBackend};
+use std::env;
 use std::fs::File;
 use std::io::stdout;
+use std::path::PathBuf;
 use std::time::Duration;
 use tracing::{debug, trace, warn};
 use tracing_subscriber::EnvFilter;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // --------------------------------------------------
+    // CLI: one-shot normalization mode (EARLY EXIT)
+    // --------------------------------------------------
+    let mut args = std::env::args().skip(1).collect::<Vec<_>>();
+
+    if args.first().map(|s| s.as_str()) == Some("--normalize") {
+        if args.len() != 2 {
+            eprintln!("Usage: --normalize <path-to-audio-file>");
+            std::process::exit(1);
+        }
+
+        let path = std::path::PathBuf::from(&args[1]);
+
+        let library_root = std::path::PathBuf::from(
+            std::env::var("HOME")
+                .map(|h| format!("{}/Downloads/Media/Music", h))
+                .unwrap_or_else(|_| ".".into()),
+        );
+
+        let normalized = crate::fs::normalize::normalize_downloaded_track(&path, &library_root)?;
+
+        crate::metadata::write::write_clean_tags(&normalized.final_path, &normalized)?;
+
+        // Visible output for confidence
+        println!("{:#?}", normalized);
+
+        return Ok(());
+    }
+
     // Initialize logging to file
     let log_file = File::create("debug.log")?;
 

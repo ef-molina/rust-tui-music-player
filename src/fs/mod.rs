@@ -9,6 +9,8 @@
 //! - No global state
 //! - All paths are provided by the caller
 
+pub mod normalize;
+
 use std::fs;
 use std::path::Path;
 

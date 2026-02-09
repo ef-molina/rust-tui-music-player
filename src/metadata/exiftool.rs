@@ -24,11 +24,25 @@ pub fn extract(path: &Path) -> Option<TrackMetadata> {
         .and_then(|d| d.as_f64())
         .unwrap_or(0.0);
 
+    // Optional fields
+    let date = get_string(entry, "Date").or_else(|| get_string(entry, "Year"));
+    let track = get_string(entry, "Track").or_else(|| get_string(entry, "TrackNumber"));
+    let purl = get_string(entry, "PURL").or_else(|| get_string(entry, "purl"));
+    let comment = get_string(entry, "Comment");
+    let synopsis = get_string(entry, "Synopsis");
+
     Some(TrackMetadata {
         title,
         artist,
         album,
         duration_secs,
+
+        date,
+        track,
+        purl,
+        comment,
+        synopsis,
+
         // Confidence assigned later by orchestrator
         confidence: MetadataConfidence::FilenameOnly,
     })
