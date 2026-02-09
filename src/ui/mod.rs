@@ -110,6 +110,41 @@ fn marquee_text(text: &str, max_width: usize, ui_tick: u64, anchor_tick: u64) ->
     out
 }
 
+// helper to wrap text into multiple lines fitting a given width, preserving word boundaries
+fn wrap_text_to_width(text: &str, max_width: usize) -> Vec<String> {
+    let mut lines = Vec::new();
+    let mut current = String::new();
+    let mut width = 0;
+
+    for word in text.split_whitespace() {
+        let w = UnicodeWidthStr::width(word);
+
+        if width > 0 && width + 1 + w > max_width {
+            lines.push(current);
+            current = word.to_string();
+            width = w;
+        } else {
+            if width > 0 {
+                current.push(' ');
+                width += 1;
+            }
+            current.push_str(word);
+            width += w;
+        }
+    }
+
+    if !current.is_empty() {
+        lines.push(current);
+    }
+
+    // Preserve empty lines (instrumentals etc.)
+    if lines.is_empty() {
+        lines.push(String::new());
+    }
+
+    lines
+}
+
 // -----------------------------------------------------------------------------
 // Pane renderers
 // -----------------------------------------------------------------------------
@@ -264,32 +299,53 @@ fn render_lyrics_mini(frame: &mut Frame, area: Rect, app: &AppState) {
             .block(block),
 
         LyricsStatus::Loaded(lyrics) => {
-            let mut lines: Vec<Line> = Vec::new();
+            let max_width = area.width.saturating_sub(2) as usize;
+            let max_height = area.height.saturating_sub(2) as usize;
 
-            if let Some(prev) = lyrics.previous() {
-                lines.push(Line::from(Span::styled(
-                    prev.text.clone(),
-                    Style::default().fg(Color::DarkGray),
-                )));
-            }
+            let mut out: Vec<Line> = Vec::new();
 
+            // Wrap current lyric first (highest priority)
             if let Some(cur) = lyrics.current() {
-                lines.push(Line::from(Span::styled(
-                    cur.text.clone(),
-                    Style::default()
-                        .fg(Color::Green)
-                        .add_modifier(Modifier::BOLD),
-                )));
+                for row in wrap_text_to_width(&cur.text, max_width) {
+                    out.push(Line::from(Span::styled(
+                        row,
+                        Style::default()
+                            .fg(Color::Green)
+                            .add_modifier(Modifier::BOLD),
+                    )));
+                }
             }
 
+            // Prepend previous lyric if space allows
+            if let Some(prev) = lyrics.previous() {
+                let wrapped_prev = wrap_text_to_width(&prev.text, max_width);
+                if wrapped_prev.len() + out.len() <= max_height {
+                    let mut prev_lines = Vec::new();
+                    for row in wrapped_prev {
+                        prev_lines.push(Line::from(Span::styled(
+                            row,
+                            Style::default().fg(Color::DarkGray),
+                        )));
+                    }
+                    prev_lines.extend(out);
+                    out = prev_lines;
+                }
+            }
+
+            // Append next lyric if space allows
             if let Some(next) = lyrics.next() {
-                lines.push(Line::from(Span::styled(
-                    next.text.clone(),
-                    Style::default().fg(Color::DarkGray),
-                )));
+                let wrapped_next = wrap_text_to_width(&next.text, max_width);
+                if out.len() + wrapped_next.len() <= max_height {
+                    for row in wrapped_next {
+                        out.push(Line::from(Span::styled(
+                            row,
+                            Style::default().fg(Color::DarkGray),
+                        )));
+                    }
+                }
             }
 
-            Paragraph::new(lines)
+            Paragraph::new(out)
                 .alignment(Alignment::Center)
                 .block(block)
         }
@@ -302,6 +358,11 @@ fn render_lyrics_mini(frame: &mut Frame, area: Rect, app: &AppState) {
 // Full lyrics pane
 // -----------------------------------------------------------------------------
 fn render_lyrics_full(frame: &mut Frame, area: Rect, app: &AppState) {
+    struct VisualLine {
+        logical_index: usize,
+        text: String,
+    }
+
     let block = Block::default()
         .title("[L]yrics")
         .borders(Borders::ALL)
@@ -331,18 +392,37 @@ fn render_lyrics_full(frame: &mut Frame, area: Rect, app: &AppState) {
                     .style(Style::default().fg(Color::DarkGray))
                     .block(block)
             } else {
-                let center = app.lyric_scroll.min(lines.len() - 1);
+                let logical_center = app.lyric_scroll.min(lines.len() - 1);
+
+                let max_width = area.width.saturating_sub(2) as usize;
+
+                let mut visual_lines: Vec<VisualLine> = Vec::new();
+                let mut logical_to_visual_start: Vec<usize> = Vec::new();
+
+                for (i, line) in lines.iter().enumerate() {
+                    logical_to_visual_start.push(visual_lines.len());
+
+                    let wrapped = wrap_text_to_width(&line.text, max_width);
+                    for row in wrapped {
+                        visual_lines.push(VisualLine {
+                            logical_index: i,
+                            text: row,
+                        });
+                    }
+                }
+
+                let visual_center = logical_to_visual_start[logical_center];
 
                 let inner_height = area.height.saturating_sub(2) as usize;
                 let half = inner_height / 2;
 
-                let start = center.saturating_sub(half);
-                let end = (start + inner_height).min(lines.len());
+                let start = visual_center.saturating_sub(half);
+                let end = (start + inner_height).min(visual_lines.len());
 
                 let text: Vec<Line> = (start..end)
                     .map(|i| {
-                        let line = &lines[i];
-                        let is_active = i == center;
+                        let v = &visual_lines[i];
+                        let is_active = v.logical_index == logical_center;
 
                         let style = if is_active {
                             Style::default()
@@ -352,7 +432,7 @@ fn render_lyrics_full(frame: &mut Frame, area: Rect, app: &AppState) {
                             Style::default().fg(Color::Gray)
                         };
 
-                        Line::from(Span::styled(line.text.clone(), style))
+                        Line::from(Span::styled(v.text.clone(), style))
                     })
                     .collect();
 
