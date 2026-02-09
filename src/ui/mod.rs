@@ -63,7 +63,7 @@ fn marquee_text(text: &str, max_width: usize, ui_tick: u64, anchor_tick: u64) ->
     let full = format!("{text}{gap}");
     let full_width = UnicodeWidthStr::width(full.as_str());
 
-    // ----- timing (human-readable) -----
+    // ----- timing -------
     let tick_rate = 100u64; // ~100 ticks/sec
     let start_delay = tick_rate / 2; // 0.5s
     let end_delay = tick_rate / 2; // 0.5s
@@ -378,7 +378,7 @@ pub fn draw(frame: &mut Frame, app: &AppState) {
         .constraints([
             Constraint::Length(3), // header
             Constraint::Min(1),    // body
-            Constraint::Length(5), // footer
+            Constraint::Length(7), // footer
         ])
         .split(size);
 
@@ -452,9 +452,10 @@ pub fn draw(frame: &mut Frame, app: &AppState) {
     let footer_rows = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(1),
-            Constraint::Length(1),
-            Constraint::Min(1),
+            Constraint::Length(1), // track title
+            Constraint::Length(1), // artist + album
+            Constraint::Length(1), // controls
+            Constraint::Min(1),    // progress bar
         ])
         .split(footer_inner);
 
@@ -475,6 +476,17 @@ pub fn draw(frame: &mut Frame, app: &AppState) {
         .map(|s| truncate_middle(s, 40))
         .unwrap_or_else(|| "Stopped".to_string());
 
+    let artist_label = app
+        .player
+        .current_track
+        .as_ref()
+        .and_then(|track| track.parent()) // album dir
+        .and_then(|album| album.parent()) // artist dir
+        .and_then(|artist| artist.file_name())
+        .and_then(|s| s.to_str())
+        .unwrap_or("Unknown Artist");
+
+    // Track title + playback symbol
     frame.render_widget(
         Paragraph::new(Line::from(vec![
             Span::styled(
@@ -488,13 +500,24 @@ pub fn draw(frame: &mut Frame, app: &AppState) {
         footer_rows[0],
     );
 
+    // Artist name
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            artist_label,
+            Style::default().fg(Color::DarkGray),
+        )))
+        .alignment(Alignment::Center),
+        footer_rows[1],
+    );
+
+    // Controls hint
     frame.render_widget(
         Paragraph::new(
             "←/→ seek  < prev  > next   s stop   space pause   b browser   t tracks   q quit",
         )
         .alignment(Alignment::Center)
         .style(Style::default().fg(Color::DarkGray)),
-        footer_rows[1],
+        footer_rows[2],
     );
 
     let pos = app.player.metrics.position;
@@ -525,6 +548,6 @@ pub fn draw(frame: &mut Frame, app: &AppState) {
             Span::styled(time_label, Style::default().fg(Color::Gray)),
         ]))
         .alignment(Alignment::Center),
-        footer_rows[2],
+        footer_rows[3],
     );
 }

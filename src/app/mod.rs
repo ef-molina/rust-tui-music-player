@@ -98,6 +98,7 @@ pub struct AppState {
     /// UI tick used for render-time effects (like blinking cursor, marquee, etc)
     pub ui_tick: u64,
     pub selection_anchor_tick: u64,
+
     /// Sender and receiver for background lyrics fetch results
     pub lyrics_rx: Receiver<LyricsFetchResult>,
     pub lyrics_tx: Sender<LyricsFetchResult>,
