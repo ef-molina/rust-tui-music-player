@@ -31,7 +31,7 @@ use crate::lyrics::{LyricsState, load_for_track};
 use crate::lyrics_fetch::LyricsFetchResult;
 use crate::lyrics_fetch::lrclib::fetch_lrc;
 use crate::metadata::extract_metadata;
-use app::{AppState, FocusPane, LyricsCacheKey, LyricsStatus};
+use app::{AppState, FocusPane, LyricsCacheKey, LyricsStatus, NowPlaying};
 use crossterm::{
     execute,
     terminal::{self, EnterAlternateScreen, LeaveAlternateScreen},
@@ -120,6 +120,14 @@ fn play_album_index(app: &mut AppState, index: usize) {
         }
     };
 
+    // update now playing information
+    app.now_playing = Some(NowPlaying {
+        title: metadata.title.clone(),
+        artist: metadata.artist.clone(),
+        album: metadata.album.clone().unwrap_or_default(),
+        duration_secs_meta: metadata.duration_secs as u64,
+    });
+
     // build cache key once
     let cache_key = LyricsCacheKey::from_metadata(&metadata);
 
@@ -189,6 +197,7 @@ fn play_next_or_stop(app: &mut AppState) {
         play_album_index(app, next);
     } else {
         app.player.stop();
+        app.clear_playback();
     }
 }
 
@@ -220,6 +229,7 @@ fn run_app() -> std::io::Result<()> {
             // -----------------------------------------------------------------
             AppEvent::Quit => {
                 app.player.shutdown();
+                app.clear_playback();
                 break;
             }
 
@@ -506,6 +516,7 @@ fn run_app() -> std::io::Result<()> {
             AppEvent::Stop => {
                 app.player.stop();
                 app.lyrics = LyricsStatus::None;
+                app.clear_playback();
             }
             AppEvent::NextTrack => play_next_or_stop(&mut app),
             AppEvent::PrevTrack => {

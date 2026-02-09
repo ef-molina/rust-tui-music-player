@@ -477,14 +477,16 @@ pub fn draw(frame: &mut Frame, app: &AppState) {
         .unwrap_or_else(|| "Stopped".to_string());
 
     let artist_label = app
-        .player
-        .current_track
+        .now_playing
         .as_ref()
-        .and_then(|track| track.parent()) // album dir
-        .and_then(|album| album.parent()) // artist dir
-        .and_then(|artist| artist.file_name())
-        .and_then(|s| s.to_str())
+        .map(|n| n.artist.as_str())
         .unwrap_or("Unknown Artist");
+
+    // let album_label = app
+    //     .now_playing
+    //     .as_ref()
+    //     .map(|n| n.album.as_str())
+    //     .unwrap_or("");
 
     // Track title + playback symbol
     frame.render_widget(

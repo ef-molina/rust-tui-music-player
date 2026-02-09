@@ -60,6 +60,15 @@ pub enum FocusPane {
     Lyrics,
 }
 
+// Currently playing track information
+#[derive(Debug, Clone)]
+pub struct NowPlaying {
+    pub title: String,
+    pub artist: String,
+    pub album: String,
+    pub duration_secs_meta: u64,
+}
+
 pub enum LyricsStatus {
     None,
     Loading,
@@ -114,6 +123,9 @@ pub struct AppState {
 
     /// Playback state and mpv integration
     pub player: Player,
+
+    /// Currently playing track information
+    pub now_playing: Option<NowPlaying>,
 }
 
 impl AppState {
@@ -147,6 +159,14 @@ impl AppState {
             lyrics_tx,
             ui_tick: 0,
             selection_anchor_tick: 0,
+            now_playing: None,
         }
+    }
+
+    pub fn clear_playback(&mut self) {
+        self.player.stop();
+        self.lyrics = LyricsStatus::None;
+        self.now_playing = None;
+        self.lyric_scroll = 0;
     }
 }
