@@ -13,6 +13,7 @@
 //! mutates it.
 //!
 
+use crate::event::jobs::JobResult;
 use crate::lyrics::LyricsState;
 use crate::lyrics_fetch::LyricsFetchResult;
 use crate::metadata::model::TrackMetadata;
@@ -140,6 +141,10 @@ pub struct AppState {
 
     /// Current input mode (normal vs command)
     pub input_mode: InputMode,
+
+    /// Background job results (downloads, normalization, etc.)
+    pub jobs_rx: Receiver<JobResult>,
+    pub jobs_tx: Sender<JobResult>,
 }
 
 impl AppState {
@@ -147,6 +152,8 @@ impl AppState {
     pub fn new(
         lyrics_rx: Receiver<LyricsFetchResult>,
         lyrics_tx: Sender<LyricsFetchResult>,
+        jobs_rx: Receiver<JobResult>,
+        jobs_tx: Sender<JobResult>,
     ) -> Self {
         let root_dir = PathBuf::from(
             std::env::var("HOME")
@@ -171,6 +178,8 @@ impl AppState {
             lyrics_pending_cache_key: None,
             lyrics_rx,
             lyrics_tx,
+            jobs_rx,
+            jobs_tx,
             ui_tick: 0,
             selection_anchor_tick: 0,
             now_playing: None,

@@ -21,8 +21,8 @@ enum FetchTier {
 /// Returns a ureq::Agent instance.
 fn lrclib_agent() -> ureq::Agent {
     ureq::AgentBuilder::new()
-        .timeout_connect(Duration::from_secs(3))
-        .timeout_read(Duration::from_secs(5))
+        .timeout_connect(Duration::from_secs(4))
+        .timeout_read(Duration::from_secs(8))
         .build()
 }
 
@@ -53,6 +53,14 @@ pub fn fetch_lrc(meta: &TrackMetadata) -> Result<Option<String>, ()> {
         duration,
         confidence = ?meta.confidence,
         "Starting lrclib lookup"
+    );
+
+    debug!(
+        title = %title,
+        artist = %artist,
+        album = meta.album.as_deref().unwrap_or("<none>"),
+        duration,
+        "lrclib canonical query"
     );
 
     // ------------------------------------------------------------

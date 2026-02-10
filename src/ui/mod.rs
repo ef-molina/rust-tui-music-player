@@ -152,7 +152,7 @@ fn render_command_bar(frame: &mut Frame, area: Rect, app: &AppState) {
         return;
     };
 
-    let cursor_visible = (app.ui_tick / 25) % 2 == 0;
+    let cursor_visible = (app.ui_tick / 25).is_multiple_of(2);
     let cursor = if cursor_visible { "█" } else { " " };
 
     let text = format!("/{buffer}{cursor}", buffer = cmd.buffer, cursor = cursor,);

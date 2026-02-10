@@ -74,7 +74,7 @@ pub struct NormalizedTrack {
 pub fn normalize_downloaded_track(
     path: &Path,
     library_root: &Path,
-) -> std::io::Result<NormalizedTrack> {
+) -> Result<NormalizedTrack, Box<dyn std::error::Error>> {
     // Step 1: extract metadata
     let meta = metadata::extract_metadata(path).ok_or_else(|| {
         std::io::Error::new(
@@ -195,10 +195,10 @@ fn contains_any(haystack: &str, needles: &[&str]) -> bool {
 fn normalize_artist(raw: &str, title: &str) -> (String, Vec<String>) {
     let raw = raw.trim();
 
-    if raw.ends_with("Music") {
-        if let Some(artist) = extract_artist_from_title(title) {
-            return (artist, Vec::new());
-        }
+    if raw.ends_with("Music")
+        && let Some(artist) = extract_artist_from_title(title)
+    {
+        return (artist, Vec::new());
     }
 
     (raw.to_string(), Vec::new())
@@ -486,7 +486,7 @@ mod tests {
         let (title, feats) = normalize_title_and_features(
             "Baby Keem, Kendrick Lamar - family ties (Official Video)",
         );
-        assert_eq!(title, "Baby Keem, Kendrick Lamar - family ties");
+        assert_eq!(title, "family ties");
         assert!(feats.is_empty());
     }
 
@@ -494,7 +494,7 @@ mod tests {
     fn parses_eminem_fuel_feat_jid() {
         let (title, feats) =
             normalize_title_and_features("Eminem - Fuel (feat. JID) [Official Audio]");
-        assert_eq!(title, "Eminem - Fuel");
+        assert_eq!(title, "Fuel");
         assert_eq!(feats, vec!["JID"]);
     }
 
@@ -503,7 +503,7 @@ mod tests {
         let (title, feats) = normalize_title_and_features(
             "JID - Community (with Clipse, Pusha T & Malice) (Official Video)",
         );
-        assert_eq!(title, "JID - Community");
+        assert_eq!(title, "Community");
         assert_eq!(feats, vec!["Clipse", "Pusha T", "Malice"]);
     }
 

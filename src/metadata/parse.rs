@@ -9,10 +9,10 @@ use super::model::TrackMetadata;
 /// 2. From filename `[id]` suffix
 pub fn extract_youtube_id(meta: &TrackMetadata, path: &Path) -> Option<String> {
     // 1) Prefer purl
-    if let Some(purl) = meta.purl.as_deref() {
-        if let Some(id) = parse_youtube_id_from_url(purl) {
-            return Some(id);
-        }
+    if let Some(purl) = meta.purl.as_deref()
+        && let Some(id) = parse_youtube_id_from_url(purl)
+    {
+        return Some(id);
     }
 
     // 2) Fallback: filename "[id]"
@@ -26,10 +26,10 @@ pub fn extract_youtube_id(meta: &TrackMetadata, path: &Path) -> Option<String> {
 /// 2. Filename prefix written by yt-dlp (`NN. `)
 pub fn extract_track_number(meta: &TrackMetadata, path: &Path) -> Option<u32> {
     // 1) Metadata track tag
-    if let Some(track) = meta.track.as_deref() {
-        if let Some(n) = parse_track_tag(track) {
-            return Some(n);
-        }
+    if let Some(track) = meta.track.as_deref()
+        && let Some(n) = parse_track_tag(track)
+    {
+        return Some(n);
     }
 
     // 2) Filename prefix (playlist index)
@@ -43,15 +43,15 @@ pub fn extract_track_number(meta: &TrackMetadata, path: &Path) -> Option<u32> {
 /// 2. First 4 digits of `date` tag
 pub fn extract_release_year(meta: &TrackMetadata) -> Option<u32> {
     // Trusted auto-generated block
-    if let Some(c) = meta.comment.as_deref() {
-        if let Some(y) = parse_released_on_year(c) {
-            return Some(y);
-        }
+    if let Some(c) = meta.comment.as_deref()
+        && let Some(y) = parse_released_on_year(c)
+    {
+        return Some(y);
     }
-    if let Some(s) = meta.synopsis.as_deref() {
-        if let Some(y) = parse_released_on_year(s) {
-            return Some(y);
-        }
+    if let Some(s) = meta.synopsis.as_deref()
+        && let Some(y) = parse_released_on_year(s)
+    {
+        return Some(y);
     }
 
     // Fallback: date tag

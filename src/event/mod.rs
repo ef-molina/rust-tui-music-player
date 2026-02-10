@@ -11,6 +11,9 @@
 //! - The event loop reacts to events and mutates `AppState`
 //! - This keeps UI, input, and player logic decoupled
 
+pub mod commands;
+pub mod jobs;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AppEvent {
     /// Request to quit the application.

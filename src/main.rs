@@ -27,10 +27,14 @@ mod metadata;
 mod player;
 mod ui;
 
+use crate::event::commands::{Command, parse_command};
+use crate::event::jobs::JobResult;
+use crate::fs::normalize::NormalizedTrack;
 use crate::lyrics::{LyricsState, load_for_track};
 use crate::lyrics_fetch::LyricsFetchResult;
 use crate::lyrics_fetch::lrclib::fetch_lrc;
 use crate::metadata::extract_metadata;
+use crate::metadata::model::TrackMetadata;
 use app::{AppState, CommandState, FocusPane, InputMode, LyricsCacheKey, LyricsStatus, NowPlaying};
 use crossterm::{
     execute,
@@ -38,13 +42,21 @@ use crossterm::{
 };
 use event::AppEvent;
 use ratatui::{Terminal, backend::CrosstermBackend};
-use std::env;
 use std::fs::File;
 use std::io::stdout;
 use std::path::PathBuf;
+use std::process::Stdio;
 use std::time::Duration;
 use tracing::{debug, trace, warn};
 use tracing_subscriber::EnvFilter;
+
+fn download_staging_dir() -> PathBuf {
+    std::path::PathBuf::from(
+        std::env::var("HOME")
+            .map(|h| format!("{}/Downloads/Media/Music/.staging", h))
+            .unwrap_or_else(|_| ".staging".into()),
+    )
+}
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // --------------------------------------------------
@@ -151,6 +163,17 @@ fn play_album_index(app: &mut AppState, index: usize) {
         }
     };
 
+    // Guardrail: lyrics require normalized tags
+    if metadata.confidence != crate::metadata::model::MetadataConfidence::Exact {
+        debug!(
+            path = %track_path.display(),
+            confidence = ?metadata.confidence,
+            "Skipping lyrics fetch for non-normalized track"
+        );
+        app.lyrics = LyricsStatus::None;
+        return;
+    }
+
     // update now playing information
     app.now_playing = Some(NowPlaying {
         title: metadata.title.clone(),
@@ -237,7 +260,8 @@ fn play_next_or_stop(app: &mut AppState) {
 /// --------------------------------------------------
 fn run_app() -> std::io::Result<()> {
     let (lyrics_tx, lyrics_rx) = std::sync::mpsc::channel();
-    let mut app = AppState::new(lyrics_rx, lyrics_tx);
+    let (jobs_tx, jobs_rx) = std::sync::mpsc::channel();
+    let mut app = AppState::new(lyrics_rx, lyrics_tx, jobs_rx, jobs_tx);
     let backend = CrosstermBackend::new(stdout());
     let mut terminal = Terminal::new(backend)?;
 
@@ -250,7 +274,8 @@ fn run_app() -> std::io::Result<()> {
     }
 
     loop {
-        let event = match input::poll_event(Duration::from_millis(10)) {
+        let in_command = matches!(app.input_mode, InputMode::Command(_));
+        let event = match input::poll_event(Duration::from_millis(10), in_command) {
             Ok(Some(ev)) => ev,
             Ok(None) => AppEvent::Tick,
             Err(err) => return Err(err),
@@ -281,8 +306,136 @@ fn run_app() -> std::io::Result<()> {
 
                     AppEvent::SubmitCommand => {
                         if let InputMode::Command(cmd) = &app.input_mode {
-                            tracing::debug!(command = %cmd.buffer, "Command submitted");
+                            let raw = cmd.buffer.clone();
+
+                            let command = parse_command(&raw);
+
+                            tracing::debug!(
+                                raw = %raw,
+                                parsed = ?command,
+                                "Parsed command"
+                            );
+
+                            match command {
+                                Command::Download { url } => {
+                                    tracing::info!(
+                                        url = %url,
+                                        "Spawning download job"
+                                    );
+
+                                    let tx = app.jobs_tx.clone();
+
+                                    std::thread::spawn(move || {
+                                        tracing::debug!(
+                                            url = %url,
+                                            "Download thread started"
+                                        );
+
+                                        let staging = download_staging_dir();
+                                        let _ = std::fs::create_dir_all(&staging);
+
+                                        let output_template =
+                                            staging.join("%(title)s [%(id)s].%(ext)s");
+
+                                        let status = std::process::Command::new("yt-dlp")
+                                            .arg("-f")
+                                            .arg("bestaudio[ext=opus]/bestaudio")
+                                            .arg("-x")
+                                            .arg("--audio-format")
+                                            .arg("opus")
+                                            .arg("--audio-quality")
+                                            .arg("0")
+                                            .arg("--embed-metadata")
+                                            .arg("--embed-thumbnail")
+                                            .arg("--convert-thumbnails")
+                                            .arg("jpg")
+                                            .arg("--add-metadata")
+                                            .arg("-o")
+                                            .arg(output_template)
+                                            .arg(&url)
+                                            .stdout(Stdio::null())
+                                            .stderr(Stdio::null())
+                                            .status();
+
+                                        match status {
+                                            Ok(s) if s.success() => {
+                                                tracing::debug!(
+                                                    url = %url,
+                                                    "yt-dlp exited successfully"
+                                                );
+
+                                                if let Ok(entries) = std::fs::read_dir(&staging)
+                                                    && let Some(latest) = entries
+                                                        .filter_map(|e| e.ok())
+                                                        .max_by_key(|e| {
+                                                            e.metadata()
+                                                                .and_then(|m| m.modified())
+                                                                .ok()
+                                                        })
+                                                {
+                                                    tracing::info!(
+                                                        url = %url,
+                                                        path = %latest.path().display(),
+                                                        "Download finished"
+                                                    );
+
+                                                    let _ = tx.send(JobResult::DownloadFinished {
+                                                        url,
+                                                        temp_path: latest.path(),
+                                                    });
+                                                    return;
+                                                }
+
+                                                tracing::error!(
+                                                    url = %url,
+                                                    "Download succeeded but no file found"
+                                                );
+
+                                                let _ = tx.send(JobResult::DownloadFailed {
+                                                    url,
+                                                    error: "Download succeeded but no file found"
+                                                        .into(),
+                                                });
+                                            }
+
+                                            Ok(s) => {
+                                                tracing::error!(
+                                                    url = %url,
+                                                    status = ?s.code(),
+                                                    "yt-dlp exited with failure"
+                                                );
+
+                                                let _ = tx.send(JobResult::DownloadFailed {
+                                                    url,
+                                                    error: "yt-dlp failed".into(),
+                                                });
+                                            }
+
+                                            Err(e) => {
+                                                tracing::error!(
+                                                    url = %url,
+                                                    error = %e,
+                                                    "Failed to spawn yt-dlp"
+                                                );
+
+                                                let _ = tx.send(JobResult::DownloadFailed {
+                                                    url,
+                                                    error: e.to_string(),
+                                                });
+                                            }
+                                        }
+                                    });
+                                }
+
+                                Command::Unknown(input) => {
+                                    tracing::warn!(
+                                        input = %input,
+                                        "Unknown command"
+                                    );
+                                }
+                            }
                         }
+
                         app.input_mode = InputMode::Normal;
                     }
 
@@ -404,6 +557,67 @@ fn run_app() -> std::io::Result<()> {
 
                                     app.lyrics_pending_cache_key = None;
                                     app.lyrics = LyricsStatus::None;
+                                }
+                            }
+                        }
+
+                        // --------------------------------------------------
+                        // Resolve background jobs (downloads, normalization)
+                        // --------------------------------------------------
+                        if let Ok(job) = app.jobs_rx.try_recv() {
+                            match job {
+                                crate::event::jobs::JobResult::DownloadStarted { url } => {
+                                    tracing::info!(
+                                        url = %url,
+                                        "Download job started"
+                                    );
+                                }
+
+                                crate::event::jobs::JobResult::DownloadFinished {
+                                    url,
+                                    temp_path,
+                                } => {
+                                    tracing::info!(
+                                        url = %url,
+                                        path = %temp_path.display(),
+                                        "Download job finished"
+                                    );
+
+                                    // ---------------------------------------------
+                                    // Normalize downloaded track
+                                    // ---------------------------------------------
+                                    let library_root = app.root_dir.clone();
+
+                                    match crate::fs::normalize::normalize_downloaded_track(
+                                        &temp_path,
+                                        &library_root,
+                                    ) {
+                                        Ok(normalized) => {
+                                            tracing::info!(
+                                                from = %temp_path.display(),
+                                                to = %normalized.final_path.display(),
+                                                artist = %normalized.artist,
+                                                title = %normalized.title,
+                                                "Track normalized successfully"
+                                            );
+                                        }
+
+                                        Err(err) => {
+                                            tracing::warn!(
+                                                path = %temp_path.display(),
+                                                error = %err,
+                                                "Track moved but metadata write failed"
+                                            );
+                                        }
+                                    }
+                                }
+
+                                crate::event::jobs::JobResult::DownloadFailed { url, error } => {
+                                    tracing::error!(
+                                        url = %url,
+                                        error = %error,
+                                        "Download job failed"
+                                    );
                                 }
                             }
                         }
@@ -579,6 +793,19 @@ fn run_app() -> std::io::Result<()> {
                                     fs::read_dir(&app.current_dir).unwrap_or_default();
                                 app.selected_index = 0;
                                 app.selection_anchor_tick = app.ui_tick;
+
+                                // Refresh album pane for directories that contain loose tracks
+                                if let Ok(Some(tracks)) = fs::detect_loose_tracks(&app.current_dir)
+                                {
+                                    app.active_album_dir = Some(app.current_dir.clone());
+                                    app.album_entries = tracks;
+                                    app.album_selected = 0;
+                                } else {
+                                    // Clear album pane if this directory has no playable tracks
+                                    app.active_album_dir = None;
+                                    app.album_entries.clear();
+                                    app.album_selected = 0;
+                                }
                             }
                         }
 
