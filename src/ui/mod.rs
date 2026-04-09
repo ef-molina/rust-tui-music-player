@@ -85,6 +85,20 @@ fn display_album_name(raw: &str) -> &str {
     raw
 }
 
+fn display_track_name(raw: &str) -> String {
+    let stem = raw.rsplit_once('.').map(|(stem, _)| stem).unwrap_or(raw);
+    let trimmed = stem.trim();
+
+    if let Some((prefix, rest)) = trimmed.split_once(". ")
+        && !prefix.is_empty()
+        && prefix.chars().all(|ch| ch.is_ascii_digit())
+    {
+        return rest.trim().to_string();
+    }
+
+    trimmed.to_string()
+}
+
 fn marquee_text(text: &str, max_width: usize, ui_tick: u64, anchor_tick: u64) -> String {
     let text_width = UnicodeWidthStr::width(text);
     if text_width <= max_width {
@@ -97,9 +111,9 @@ fn marquee_text(text: &str, max_width: usize, ui_tick: u64, anchor_tick: u64) ->
 
     // ----- timing -------
     let tick_rate = 100u64; // ~100 ticks/sec
-    let start_delay = tick_rate / 2; // 0.5s
-    let end_delay = tick_rate / 2; // 0.5s
-    let speed = 8u64; // ticks per column (higher = slower)
+    let start_delay = tick_rate; // 1.0s
+    let end_delay = tick_rate; // 1.0s
+    let speed = 14u64; // ticks per column (higher = slower)
 
     let max_offset = full_width.saturating_sub(max_width) as u64;
     let scroll_duration = max_offset * speed;
@@ -297,8 +311,10 @@ fn render_search_results(frame: &mut Frame, area: Rect, app: &AppState) {
             let primary = match (&entry.artist, &entry.title) {
                 (Some(artist), Some(title)) => format!("{artist} - {title}"),
                 (None, Some(title)) => title.clone(),
-                (Some(artist), None) => format!("{artist} - {}", entry.file_name),
-                (None, None) => entry.file_name.clone(),
+                (Some(artist), None) => {
+                    format!("{artist} - {}", display_track_name(&entry.file_name))
+                }
+                (None, None) => display_track_name(&entry.file_name),
             };
             let primary_text = if i == app.search.selected {
                 marquee_text(&primary, primary_width, app.ui_tick, app.selection_anchor_tick)
@@ -430,13 +446,13 @@ fn render_album(frame: &mut Frame, area: Rect, app: &AppState) {
                 Style::default()
             };
 
-            // ListItem::new(format!("{icon}{}", e.name)).style(style)
+            let display_name = display_track_name(&e.name);
             let available = area.width.saturating_sub(6) as usize;
 
             let name = if app.focus == FocusPane::Album && i == app.album_selected {
-                marquee_text(&e.name, available, app.ui_tick, app.selection_anchor_tick)
+                marquee_text(&display_name, available, app.ui_tick, app.selection_anchor_tick)
             } else {
-                e.name.clone()
+                display_name
             };
 
             ListItem::new(format!("{icon}{name}")).style(style)
@@ -771,7 +787,8 @@ pub fn draw(frame: &mut Frame, app: &AppState) {
         .and_then(|s| s.to_str());
 
     let track_label = playing_name
-        .map(|s| truncate_middle(s, 40))
+        .map(display_track_name)
+        .map(|s| truncate_middle(&s, 40))
         .unwrap_or_else(|| "Stopped".to_string());
 
     let artist_label = app
@@ -850,4 +867,21 @@ pub fn draw(frame: &mut Frame, app: &AppState) {
         .alignment(Alignment::Center),
         footer_rows[3],
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn strips_numeric_prefix_and_extension_from_track_labels() {
+        assert_eq!(display_track_name("01. Brain Damage.flac"), "Brain Damage");
+        assert_eq!(display_track_name("8. Role Model.mp3"), "Role Model");
+    }
+
+    #[test]
+    fn leaves_non_numbered_track_labels_readable() {
+        assert_eq!(display_track_name("Infinite.flac"), "Infinite");
+        assert_eq!(display_track_name("Lose Yourself"), "Lose Yourself");
+    }
 }
