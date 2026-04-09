@@ -99,6 +99,33 @@ fn display_track_name(raw: &str) -> String {
     trimmed.to_string()
 }
 
+fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
+    let vertical_margin = 100u16.saturating_sub(percent_y) / 2;
+    let horizontal_margin = 100u16.saturating_sub(percent_x) / 2;
+
+    let popup_layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Percentage(vertical_margin),
+            Constraint::Percentage(percent_y),
+            Constraint::Percentage(vertical_margin),
+        ])
+        .split(r);
+
+    let body = popup_layout[1];
+
+    let body_layout = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage(horizontal_margin),
+            Constraint::Percentage(percent_x),
+            Constraint::Percentage(horizontal_margin),
+        ])
+        .split(body);
+
+    body_layout[1]
+}
+
 fn marquee_text(text: &str, max_width: usize, ui_tick: u64, anchor_tick: u64) -> String {
     let text_width = UnicodeWidthStr::width(text);
     if text_width <= max_width {
@@ -240,39 +267,13 @@ fn render_text_bar(
     );
 }
 
-fn render_search_results(frame: &mut Frame, area: Rect, app: &AppState) {
-    let selection_label = if app.search.results.is_empty() {
-        "0/0".to_string()
-    } else {
-        format!("{}/{}", app.search.selected + 1, app.search.results.len())
-    };
-
-    let title = match &app.search.status {
-        SearchStatus::Idle => format!("Search Results ({selection_label}) - Enter plays"),
-        SearchStatus::Indexing { scanned } => {
-            format!("Search Results ({selection_label}, indexing {scanned}) - Enter plays")
-        }
-        SearchStatus::Ready => {
-            format!("Search Results ({selection_label}) - Enter plays")
-        }
-        SearchStatus::Failed(_) => "Search Results (failed) - Enter plays".to_string(),
-    };
-
-    let block = Block::default()
-        .title(title)
-        .borders(Borders::ALL)
-        .border_style(
-            Style::default()
-                .fg(Color::Green)
-                .add_modifier(Modifier::BOLD),
-        );
-
+fn render_search_results_content(frame: &mut Frame, area: Rect, app: &AppState) {
     if let SearchStatus::Failed(error) = &app.search.status {
         frame.render_widget(
             Paragraph::new(error.as_str())
                 .alignment(Alignment::Center)
                 .style(Style::default().fg(Color::Red))
-                .block(block),
+                .block(Block::default()),
             area,
         );
         return;
@@ -280,10 +281,10 @@ fn render_search_results(frame: &mut Frame, area: Rect, app: &AppState) {
 
     if app.search.query.trim().is_empty() {
         frame.render_widget(
-            Paragraph::new("Type to search by file name or path")
+            Paragraph::new("Type to search by artist, title, album, file name, or path")
                 .alignment(Alignment::Center)
                 .style(Style::default().fg(Color::DarkGray))
-                .block(block),
+                .block(Block::default()),
             area,
         );
         return;
@@ -294,7 +295,7 @@ fn render_search_results(frame: &mut Frame, area: Rect, app: &AppState) {
             Paragraph::new("No matches")
                 .alignment(Alignment::Center)
                 .style(Style::default().fg(Color::DarkGray))
-                .block(block),
+                .block(Block::default()),
             area,
         );
         return;
@@ -340,7 +341,6 @@ fn render_search_results(frame: &mut Frame, area: Rect, app: &AppState) {
         .collect();
 
     let list = List::new(items)
-        .block(block)
         .highlight_style(
             Style::default()
                 .bg(Color::Blue)
@@ -354,15 +354,78 @@ fn render_search_results(frame: &mut Frame, area: Rect, app: &AppState) {
     frame.render_stateful_widget(list, area, &mut state);
 }
 
+fn render_modal_backdrop(frame: &mut Frame, area: Rect) {
+    frame.render_widget(
+        Block::default().style(
+            Style::default()
+                .bg(Color::Rgb(8, 10, 14))
+                .add_modifier(Modifier::DIM),
+        ),
+        area,
+    );
+}
+
+fn render_search_picker(frame: &mut Frame, area: Rect, app: &AppState) {
+    let modal_area = centered_rect(86, 78, area);
+    let selection_label = if app.search.results.is_empty() {
+        "0/0".to_string()
+    } else {
+        format!("{}/{}", app.search.selected + 1, app.search.results.len())
+    };
+
+    let title = match &app.search.status {
+        SearchStatus::Idle => format!("Search Results ({selection_label}) - Enter plays"),
+        SearchStatus::Indexing { scanned } => {
+            format!("Search Results ({selection_label}, indexing {scanned}) - Enter plays")
+        }
+        SearchStatus::Ready => format!("Search Results ({selection_label}) - Enter plays"),
+        SearchStatus::Failed(_) => "Search Results (failed) - Enter plays".to_string(),
+    };
+
+    let block = Block::default()
+        .title(title)
+        .borders(Borders::ALL)
+        .border_style(
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+        );
+
+    render_modal_backdrop(frame, area);
+    frame.render_widget(Clear, modal_area);
+
+    let inner = block.inner(modal_area);
+    frame.render_widget(block, modal_area);
+
+    let picker_chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3), // search bar
+            Constraint::Min(1),    // results
+        ])
+        .split(inner);
+
+    render_text_bar(
+        frame,
+        picker_chunks[0],
+        "Search",
+        "/",
+        app.search.query.as_str(),
+        app.search.cursor,
+        if (app.ui_tick / 25).is_multiple_of(2) {
+            '█'
+        } else {
+            ' '
+        },
+    );
+
+    render_search_results_content(frame, picker_chunks[1], app);
+}
+
 // -----------------------------------------------------------------------------
 // Pane renderers
 // -----------------------------------------------------------------------------
 fn render_browser(frame: &mut Frame, area: Rect, app: &AppState) {
-    if matches!(app.input_mode, InputMode::Search) {
-        render_search_results(frame, area, app);
-        return;
-    }
-
     let items: Vec<ListItem> = app
         .browser_entries
         .iter()
@@ -667,7 +730,7 @@ pub fn draw(frame: &mut Frame, app: &AppState) {
     let size = frame.size();
     frame.render_widget(Clear, size);
 
-    let chunks = if matches!(app.input_mode, InputMode::Command(_) | InputMode::Search) {
+    let chunks = if matches!(app.input_mode, InputMode::Command(_)) {
         Layout::default()
             .direction(Direction::Vertical)
             .constraints([
@@ -750,7 +813,7 @@ pub fn draw(frame: &mut Frame, app: &AppState) {
     // -------------------------------------------------------------------------
 
     // If in command mode, we need to render the command bar above the footer
-    let footer_index = if matches!(app.input_mode, InputMode::Command(_) | InputMode::Search) {
+    let footer_index = if matches!(app.input_mode, InputMode::Command(_)) {
         render_command_bar(frame, chunks[2], app);
         3
     } else {
@@ -867,11 +930,16 @@ pub fn draw(frame: &mut Frame, app: &AppState) {
         .alignment(Alignment::Center),
         footer_rows[3],
     );
+
+    if matches!(app.input_mode, InputMode::Search) {
+        render_search_picker(frame, chunks[1], app);
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ratatui::layout::Rect;
 
     #[test]
     fn strips_numeric_prefix_and_extension_from_track_labels() {
@@ -883,5 +951,16 @@ mod tests {
     fn leaves_non_numbered_track_labels_readable() {
         assert_eq!(display_track_name("Infinite.flac"), "Infinite");
         assert_eq!(display_track_name("Lose Yourself"), "Lose Yourself");
+    }
+
+    #[test]
+    fn centered_rect_stays_within_bounds() {
+        let area = Rect::new(0, 0, 100, 40);
+        let rect = centered_rect(86, 78, area);
+
+        assert_eq!(rect.width, 86);
+        assert_eq!(rect.height, 32);
+        assert_eq!(rect.x, 7);
+        assert_eq!(rect.y, 4);
     }
 }
