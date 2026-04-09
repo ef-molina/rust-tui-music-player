@@ -42,7 +42,7 @@ impl LyricsCacheKey {
 }
 
 /// Represent a single entry in file browser
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BrowserEntry {
     /// Display name of the entry
     pub name: String,
@@ -75,6 +75,21 @@ pub enum LyricsStatus {
     None,
     Loading,
     Loaded(LyricsState),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StatusLevel {
+    Info,
+    Success,
+    Warning,
+    Error,
+}
+
+#[derive(Debug, Clone)]
+pub struct StatusMessage {
+    pub level: StatusLevel,
+    pub text: String,
+    pub expires_at_tick: Option<u64>,
 }
 
 #[derive(Debug, Clone)]
@@ -143,6 +158,16 @@ pub enum InputMode {
     Search,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NavigationState {
+    pub focus: FocusPane,
+    pub current_dir: PathBuf,
+    pub selected_index: usize,
+    pub active_album_dir: Option<PathBuf>,
+    pub album_entries: Vec<BrowserEntry>,
+    pub album_selected: usize,
+}
+
 pub struct AppState {
     /// Root directory of the file browser
     pub root_dir: PathBuf,
@@ -208,6 +233,15 @@ pub struct AppState {
     /// Background job results (downloads, normalization, etc.)
     pub jobs_rx: Receiver<JobResult>,
     pub jobs_tx: Sender<JobResult>,
+
+    /// Transient statusline message for background activity and feedback
+    pub status_message: Option<StatusMessage>,
+
+    /// Active download URL for long-running job visibility
+    pub active_download_url: Option<String>,
+
+    /// Bounded history of previous navigation states
+    pub navigation_history: Vec<NavigationState>,
 }
 
 impl AppState {
@@ -252,6 +286,9 @@ impl AppState {
             search: SearchState::new(root_dir.clone(), 0),
             search_rx,
             search_tx,
+            status_message: None,
+            active_download_url: None,
+            navigation_history: Vec::new(),
         }
     }
 
@@ -260,5 +297,40 @@ impl AppState {
         self.lyrics = LyricsStatus::None;
         self.now_playing = None;
         self.lyric_scroll = 0;
+    }
+
+    pub fn set_status(
+        &mut self,
+        level: StatusLevel,
+        text: impl Into<String>,
+        ttl_ticks: Option<u64>,
+    ) {
+        self.status_message = Some(StatusMessage {
+            level,
+            text: text.into(),
+            expires_at_tick: ttl_ticks.map(|ttl| self.ui_tick.saturating_add(ttl)),
+        });
+    }
+
+    pub fn clear_expired_status(&mut self) {
+        if self
+            .status_message
+            .as_ref()
+            .and_then(|status| status.expires_at_tick)
+            .is_some_and(|expires_at| self.ui_tick >= expires_at)
+        {
+            self.status_message = None;
+        }
+    }
+
+    pub fn current_navigation_state(&self) -> NavigationState {
+        NavigationState {
+            focus: self.focus,
+            current_dir: self.current_dir.clone(),
+            selected_index: self.selected_index,
+            active_album_dir: self.active_album_dir.clone(),
+            album_entries: self.album_entries.clone(),
+            album_selected: self.album_selected,
+        }
     }
 }

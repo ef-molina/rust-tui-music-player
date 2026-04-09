@@ -25,7 +25,7 @@ pub enum AppEvent {
     /// Navigate the file browser.
     MoveUp,
     MoveDown,
-    NavigateUp,
+    NavigateBack,
     Activate,
 
     /// Media playback controls.

@@ -58,7 +58,7 @@ pub fn poll_event(timeout: Duration, input_mode: &InputMode) -> std::io::Result<
                 KeyCode::Char('q') => Some(AppEvent::Quit),
                 KeyCode::Up => Some(AppEvent::MoveUp),
                 KeyCode::Down => Some(AppEvent::MoveDown),
-                KeyCode::Backspace => Some(AppEvent::NavigateUp),
+                KeyCode::Backspace => Some(AppEvent::NavigateBack),
                 KeyCode::Enter => Some(AppEvent::Activate),
                 KeyCode::Char(' ') => Some(AppEvent::TogglePause),
                 KeyCode::Left => Some(AppEvent::SeekBackward),

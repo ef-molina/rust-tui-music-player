@@ -20,7 +20,7 @@ use ratatui::{
     widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph},
 };
 
-use crate::app::{AppState, FocusPane, InputMode, LyricsStatus, SearchStatus};
+use crate::app::{AppState, FocusPane, InputMode, LyricsStatus, SearchStatus, StatusLevel};
 use crate::player::PlaybackState;
 use unicode_width::UnicodeWidthStr;
 
@@ -283,6 +283,51 @@ fn lyrics_title(app: &AppState) -> &'static str {
         LyricsStatus::Loading => "[L]yrics · Loading",
         LyricsStatus::None => "[L]yrics · Unavailable",
         LyricsStatus::Loaded(_) => "[L]yrics · Synced",
+    }
+}
+
+fn status_level_color(level: StatusLevel) -> Color {
+    match level {
+        StatusLevel::Info => ACCENT,
+        StatusLevel::Success => ACCENT,
+        StatusLevel::Warning => WARNING,
+        StatusLevel::Error => DANGER,
+    }
+}
+
+fn current_status(app: &AppState) -> (StatusLevel, String) {
+    if let Some(status) = &app.status_message {
+        return (status.level, status.text.clone());
+    }
+
+    if let Some(url) = &app.active_download_url {
+        return (
+            StatusLevel::Info,
+            format!("Downloading media from {}", truncate_middle(url, 56)),
+        );
+    }
+
+    match &app.search.status {
+        SearchStatus::Indexing { scanned } => {
+            return (
+                StatusLevel::Info,
+                format!("Indexing library • {scanned} tracks discovered"),
+            );
+        }
+        SearchStatus::Failed(error) => {
+            return (StatusLevel::Error, format!("Search indexing failed: {error}"));
+        }
+        SearchStatus::Idle | SearchStatus::Ready => {}
+    }
+
+    match app.lyrics {
+        LyricsStatus::Loading => (StatusLevel::Info, "Fetching lyrics…".to_string()),
+        LyricsStatus::Loaded(_) => (StatusLevel::Success, "Lyrics synced".to_string()),
+        LyricsStatus::None if !app.search.index_entries.is_empty() => (
+            StatusLevel::Success,
+            format!("Library ready • {} indexed tracks", app.search.index_entries.len()),
+        ),
+        LyricsStatus::None => (StatusLevel::Info, "Ready".to_string()),
     }
 }
 
@@ -760,6 +805,49 @@ fn render_lyrics_full(frame: &mut Frame, area: Rect, app: &AppState) {
     frame.render_widget(paragraph, area);
 }
 
+fn render_statusline(frame: &mut Frame, area: Rect, app: &AppState) {
+    let (level, message) = current_status(app);
+    let color = status_level_color(level);
+    let right_text = match app.input_mode {
+        InputMode::Search => "Esc close  Enter play  ↑/↓ move",
+        InputMode::Command(_) => "Enter run  Esc close",
+        InputMode::Normal => "Backspace back  / search  : command",
+    };
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(SUBTLE));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Min(10), Constraint::Length(34)])
+        .split(inner);
+
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            badge_span(
+                match level {
+                    StatusLevel::Info => "Info",
+                    StatusLevel::Success => "Ready",
+                    StatusLevel::Warning => "Warn",
+                    StatusLevel::Error => "Error",
+                },
+                color,
+            ),
+            Span::raw(" "),
+            Span::styled(truncate_middle(&message, chunks[0].width.saturating_sub(10) as usize), muted_style()),
+        ])),
+        chunks[0],
+    );
+
+    frame.render_widget(
+        Paragraph::new(Span::styled(right_text, muted_style())).alignment(Alignment::Right),
+        chunks[1],
+    );
+}
+
 // -----------------------------------------------------------------------------
 // Main draw
 // -----------------------------------------------------------------------------
@@ -774,6 +862,7 @@ pub fn draw(frame: &mut Frame, app: &AppState) {
                 Constraint::Length(3), // header
                 Constraint::Min(1),    // body
                 Constraint::Length(3), // command bar
+                Constraint::Length(3), // statusline
                 Constraint::Length(7), // footer
             ])
             .split(size)
@@ -783,6 +872,7 @@ pub fn draw(frame: &mut Frame, app: &AppState) {
             .constraints([
                 Constraint::Length(3), // header
                 Constraint::Min(1),    // body
+                Constraint::Length(3), // statusline
                 Constraint::Length(7), // footer
             ])
             .split(size)
@@ -884,12 +974,14 @@ pub fn draw(frame: &mut Frame, app: &AppState) {
     // Footer
     // -------------------------------------------------------------------------
 
-    // If in command mode, we need to render the command bar above the footer
+    // If in command mode, we need to render the command bar above the statusline/footer
     let footer_index = if matches!(app.input_mode, InputMode::Command(_)) {
         render_command_bar(frame, chunks[2], app);
-        3
+        render_statusline(frame, chunks[3], app);
+        4
     } else {
-        2
+        render_statusline(frame, chunks[2], app);
+        3
     };
 
     let footer_block = Block::default()

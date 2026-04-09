@@ -36,8 +36,8 @@ use crate::lyrics_fetch::lrclib::fetch_lrc;
 use crate::metadata::extract_metadata;
 use crate::search::{SearchMessage, filter_results, spawn_index_update, spawn_indexer};
 use app::{
-    AppState, CommandState, FocusPane, InputMode, LyricsCacheKey, LyricsStatus, NowPlaying,
-    SearchStatus,
+    AppState, CommandState, FocusPane, InputMode, LyricsCacheKey, LyricsStatus, NavigationState,
+    NowPlaying, SearchStatus, StatusLevel,
 };
 use crossterm::{
     execute,
@@ -53,12 +53,32 @@ use std::time::Duration;
 use tracing::{debug, trace, warn};
 use tracing_subscriber::EnvFilter;
 
+const NAVIGATION_HISTORY_LIMIT: usize = 20;
+
 fn download_staging_dir() -> PathBuf {
     std::path::PathBuf::from(
         std::env::var("HOME")
             .map(|h| format!("{}/Downloads/Media/Music/.staging", h))
             .unwrap_or_else(|_| ".staging".into()),
     )
+}
+
+fn truncate_status_url(url: &str) -> String {
+    const MAX_LEN: usize = 56;
+    if url.chars().count() <= MAX_LEN {
+        return url.to_string();
+    }
+
+    let prefix: String = url.chars().take(36).collect();
+    let suffix: String = url
+        .chars()
+        .rev()
+        .take(14)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
+    format!("{prefix}…{suffix}")
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -350,6 +370,50 @@ fn restore_search_context(app: &mut AppState) {
     app.focus = app.search.last_focus;
 }
 
+fn push_navigation_history(app: &mut AppState) {
+    let snapshot = app.current_navigation_state();
+    if app.navigation_history.last() == Some(&snapshot) {
+        return;
+    }
+
+    if app.navigation_history.len() == NAVIGATION_HISTORY_LIMIT {
+        app.navigation_history.remove(0);
+    }
+    app.navigation_history.push(snapshot);
+}
+
+fn restore_navigation_state(app: &mut AppState, state: &NavigationState) {
+    load_browser_dir(app, state.current_dir.clone());
+
+    let dir_count = app.browser_entries.iter().filter(|entry| entry.is_dir).count();
+    app.selected_index = if dir_count == 0 {
+        0
+    } else {
+        state.selected_index.min(dir_count - 1)
+    };
+
+    app.active_album_dir = state.active_album_dir.clone();
+    app.album_entries = state.album_entries.clone();
+    app.album_selected = if app.album_entries.is_empty() {
+        0
+    } else {
+        state.album_selected.min(app.album_entries.len() - 1)
+    };
+    app.focus = state.focus;
+    app.selection_anchor_tick = app.ui_tick;
+}
+
+fn pop_navigation_history(app: &mut AppState) -> bool {
+    while let Some(state) = app.navigation_history.pop() {
+        if state != app.current_navigation_state() {
+            restore_navigation_state(app, &state);
+            return true;
+        }
+    }
+
+    false
+}
+
 fn merge_search_entries(app: &mut AppState, entries: Vec<app::SearchEntry>) {
     for entry in entries {
         if let Some(existing) = app
@@ -436,6 +500,7 @@ fn jump_to_track_path(app: &mut AppState, track_path: &std::path::Path) {
 
 fn handle_tick(app: &mut AppState) {
     app.ui_tick = app.ui_tick.wrapping_add(1);
+    app.clear_expired_status();
     app.player.poll_metrics();
 
     while let Ok(message) = app.search_rx.try_recv() {
@@ -455,6 +520,11 @@ fn handle_tick(app: &mut AppState) {
             }
             SearchMessage::Finished { scanned } => {
                 app.search.status = SearchStatus::Ready;
+                app.set_status(
+                    StatusLevel::Success,
+                    format!("Library index ready: {} tracks", app.search.index_entries.len()),
+                    Some(500),
+                );
                 debug!(
                     scanned,
                     indexed = app.search.index_entries.len(),
@@ -463,6 +533,11 @@ fn handle_tick(app: &mut AppState) {
                 refresh_search_results(app);
             }
             SearchMessage::Failed(error) => {
+                app.set_status(
+                    StatusLevel::Error,
+                    format!("Search indexing failed: {error}"),
+                    None,
+                );
                 app.search.status = SearchStatus::Failed(error);
                 refresh_search_results(app);
             }
@@ -504,6 +579,7 @@ fn handle_tick(app: &mut AppState) {
                             if !lines.is_empty() {
                                 app.lyrics = LyricsStatus::Loaded(LyricsState::new(lines));
                                 app.lyric_scroll = 0;
+                                app.set_status(StatusLevel::Success, "Lyrics loaded", Some(250));
                             } else {
                                 app.lyrics = LyricsStatus::None;
                             }
@@ -519,6 +595,11 @@ fn handle_tick(app: &mut AppState) {
                     }
                 } else if is_current {
                     app.lyrics = LyricsStatus::None;
+                    app.set_status(
+                        StatusLevel::Warning,
+                        "Couldn't save fetched lyrics",
+                        Some(350),
+                    );
                 }
             }
             LyricsFetchResult::NotFound { request_id } => {
@@ -539,6 +620,7 @@ fn handle_tick(app: &mut AppState) {
                     }
 
                     app.lyrics = LyricsStatus::None;
+                    app.set_status(StatusLevel::Warning, "No lyrics found", Some(250));
                 }
             }
             LyricsFetchResult::Failed { request_id } => {
@@ -551,6 +633,7 @@ fn handle_tick(app: &mut AppState) {
                 } else {
                     app.lyrics_pending_cache_key = None;
                     app.lyrics = LyricsStatus::None;
+                    app.set_status(StatusLevel::Warning, "Lyrics fetch failed", Some(350));
                 }
             }
         }
@@ -559,9 +642,16 @@ fn handle_tick(app: &mut AppState) {
     if let Ok(job) = app.jobs_rx.try_recv() {
         match job {
             JobResult::DownloadStarted { url } => {
+                app.active_download_url = Some(url.clone());
+                app.set_status(
+                    StatusLevel::Info,
+                    format!("Downloading: {}", truncate_status_url(&url)),
+                    None,
+                );
                 tracing::info!(url = %url, "Download job started");
             }
             JobResult::DownloadFinished { url, temp_path } => {
+                app.active_download_url = None;
                 tracing::info!(
                     url = %url,
                     path = %temp_path.display(),
@@ -575,6 +665,11 @@ fn handle_tick(app: &mut AppState) {
                     &library_root,
                 ) {
                     Ok(normalized) => {
+                        app.set_status(
+                            StatusLevel::Success,
+                            format!("Added {} - {}", normalized.artist, normalized.title),
+                            Some(500),
+                        );
                         tracing::info!(
                             from = %temp_path.display(),
                             to = %normalized.final_path.display(),
@@ -590,6 +685,11 @@ fn handle_tick(app: &mut AppState) {
                         );
                     }
                     Err(err) => {
+                        app.set_status(
+                            StatusLevel::Error,
+                            format!("Normalization failed: {err}"),
+                            Some(600),
+                        );
                         tracing::warn!(
                             path = %temp_path.display(),
                             error = %err,
@@ -599,6 +699,12 @@ fn handle_tick(app: &mut AppState) {
                 }
             }
             JobResult::DownloadFailed { url, error } => {
+                app.active_download_url = None;
+                app.set_status(
+                    StatusLevel::Error,
+                    format!("Download failed: {} ({error})", truncate_status_url(&url)),
+                    Some(600),
+                );
                 tracing::error!(
                     url = %url,
                     error = %error,
@@ -890,6 +996,7 @@ fn run_app() -> std::io::Result<()> {
                         .map(|entry| entry.path.clone());
 
                     if let Some(path) = path {
+                        push_navigation_history(&mut app);
                         jump_to_track_path(&mut app, &path);
                         let index = app.album_selected;
                         play_album_index(&mut app, index);
@@ -956,15 +1063,32 @@ fn run_app() -> std::io::Result<()> {
 
                     // -----------------------------------------------------------------
                     // Focus switching
-                    AppEvent::FocusBrowser => app.focus = FocusPane::Browser,
+                    AppEvent::FocusBrowser => {
+                        if app.focus != FocusPane::Browser {
+                            push_navigation_history(&mut app);
+                            app.focus = FocusPane::Browser;
+                        }
+                    }
                     AppEvent::FocusAlbum => {
-                        if app.active_album_dir.is_some() || app.current_dir == app.root_dir {
+                        if (app.active_album_dir.is_some() || app.current_dir == app.root_dir)
+                            && app.focus != FocusPane::Album
+                        {
+                            push_navigation_history(&mut app);
                             app.focus = FocusPane::Album;
                         }
                     }
                     AppEvent::FocusLyrics => {
-                        if let LyricsStatus::Loaded(lyrics) = &app.lyrics {
-                            app.lyric_scroll = lyrics.current_index;
+                        let current_index = if let LyricsStatus::Loaded(lyrics) = &app.lyrics {
+                            Some(lyrics.current_index)
+                        } else {
+                            None
+                        };
+
+                        if let Some(current_index) = current_index {
+                            if app.focus != FocusPane::Lyrics {
+                                push_navigation_history(&mut app);
+                            }
+                            app.lyric_scroll = current_index;
                             app.focus = FocusPane::Lyrics;
                         }
                     }
@@ -1013,32 +1137,15 @@ fn run_app() -> std::io::Result<()> {
                     },
 
                     // -----------------------------------------------------------------
-                    AppEvent::NavigateUp => match app.focus {
-                        FocusPane::Lyrics => app.focus = FocusPane::Album,
-                        FocusPane::Album => app.focus = FocusPane::Browser,
-                        FocusPane::Browser => {
-                            if app.current_dir != app.root_dir
-                                && let Some(parent) = app.current_dir.parent()
-                            {
-                                app.current_dir = parent.to_path_buf();
-                                app.browser_entries =
-                                    fs::read_dir(&app.current_dir).unwrap_or_default();
-                                app.selected_index = 0;
-                                app.selection_anchor_tick = app.ui_tick;
-
-                                if let Ok(Some(tracks)) = fs::detect_loose_tracks(&app.current_dir)
-                                {
-                                    app.active_album_dir = Some(app.current_dir.clone());
-                                    app.album_entries = tracks;
-                                    app.album_selected = 0;
-                                }
-                            }
+                    AppEvent::NavigateBack => {
+                        if !pop_navigation_history(&mut app) {
+                            app.set_status(StatusLevel::Info, "No previous view", Some(250));
                         }
-                    },
+                    }
 
                     // -----------------------------------------------------------------
                     AppEvent::JumpToNowPlaying => {
-                        let Some(track_path) = &app.player.current_track else {
+                        let Some(track_path) = app.player.current_track.clone() else {
                             continue;
                         };
 
@@ -1049,6 +1156,8 @@ fn run_app() -> std::io::Result<()> {
                         if !album_dir.starts_with(&app.root_dir) {
                             continue;
                         }
+
+                        push_navigation_history(&mut app);
 
                         if let Ok(Some(tracks)) = fs::detect_album(album_dir) {
                             app.active_album_dir = Some(album_dir.to_path_buf());
@@ -1089,6 +1198,8 @@ fn run_app() -> std::io::Result<()> {
                             if !new_path.starts_with(&app.root_dir) {
                                 continue;
                             }
+
+                            push_navigation_history(&mut app);
 
                             if let Ok(Some(tracks)) = fs::detect_album(&new_path) {
                                 app.active_album_dir = Some(new_path);
@@ -1177,6 +1288,14 @@ fn run_app() -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::mpsc::channel;
+
+    fn test_app() -> AppState {
+        let (lyrics_tx, lyrics_rx) = channel();
+        let (search_tx, search_rx) = channel();
+        let (jobs_tx, jobs_rx) = channel();
+        AppState::new(lyrics_rx, lyrics_tx, search_rx, search_tx, jobs_rx, jobs_tx)
+    }
 
     #[test]
     fn previous_and_next_char_boundaries_handle_unicode() {
@@ -1228,5 +1347,33 @@ mod tests {
 
         move_cursor_left(&buffer, &mut cursor);
         assert_eq!(cursor, 0);
+    }
+
+    #[test]
+    fn navigation_history_dedupes_and_stays_bounded() {
+        let mut app = test_app();
+        app.current_dir = PathBuf::from("/tmp/root");
+
+        push_navigation_history(&mut app);
+        push_navigation_history(&mut app);
+        assert_eq!(app.navigation_history.len(), 1);
+
+        for index in 0..(NAVIGATION_HISTORY_LIMIT + 5) {
+            app.current_dir = PathBuf::from(format!("/tmp/root/{index}"));
+            push_navigation_history(&mut app);
+        }
+
+        assert_eq!(app.navigation_history.len(), NAVIGATION_HISTORY_LIMIT);
+        assert_eq!(
+            app.navigation_history.first().map(|state| state.current_dir.clone()),
+            Some(PathBuf::from("/tmp/root/5"))
+        );
+        assert_eq!(
+            app.navigation_history.last().map(|state| state.current_dir.clone()),
+            Some(PathBuf::from(format!(
+                "/tmp/root/{}",
+                NAVIGATION_HISTORY_LIMIT + 4
+            )))
+        );
     }
 }
