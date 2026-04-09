@@ -25,6 +25,7 @@ mod lyrics;
 mod lyrics_fetch;
 mod metadata;
 mod player;
+mod search;
 mod ui;
 
 use crate::event::commands::{Command, parse_command};
@@ -33,7 +34,11 @@ use crate::lyrics::{LyricsState, load_for_track};
 use crate::lyrics_fetch::LyricsFetchResult;
 use crate::lyrics_fetch::lrclib::fetch_lrc;
 use crate::metadata::extract_metadata;
-use app::{AppState, CommandState, FocusPane, InputMode, LyricsCacheKey, LyricsStatus, NowPlaying};
+use crate::search::{SearchMessage, filter_results, spawn_index_update, spawn_indexer};
+use app::{
+    AppState, CommandState, FocusPane, InputMode, LyricsCacheKey, LyricsStatus, NowPlaying,
+    SearchStatus,
+};
 use crossterm::{
     execute,
     terminal::{self, EnterAlternateScreen, LeaveAlternateScreen},
@@ -262,17 +267,383 @@ fn play_next_or_stop(app: &mut AppState) {
     }
 }
 
+fn refresh_search_results(app: &mut AppState) {
+    app.search.results = filter_results(&app.search.index_entries, &app.search.query);
+
+    if app.search.results.is_empty() {
+        app.search.selected = 0;
+    } else {
+        app.search.selected = app.search.selected.min(app.search.results.len() - 1);
+    }
+}
+
+fn previous_char_boundary(text: &str, cursor: usize) -> usize {
+    text[..cursor]
+        .char_indices()
+        .next_back()
+        .map(|(idx, _)| idx)
+        .unwrap_or(0)
+}
+
+fn next_char_boundary(text: &str, cursor: usize) -> usize {
+    if cursor >= text.len() {
+        return text.len();
+    }
+
+    let ch = text[cursor..].chars().next().unwrap_or_default();
+    cursor + ch.len_utf8()
+}
+
+fn insert_char(buffer: &mut String, cursor: &mut usize, ch: char) {
+    buffer.insert(*cursor, ch);
+    *cursor += ch.len_utf8();
+}
+
+fn backspace_char(buffer: &mut String, cursor: &mut usize) {
+    if *cursor == 0 {
+        return;
+    }
+
+    let start = previous_char_boundary(buffer, *cursor);
+    buffer.drain(start..*cursor);
+    *cursor = start;
+}
+
+fn delete_char(buffer: &mut String, cursor: &mut usize) {
+    if *cursor >= buffer.len() {
+        return;
+    }
+
+    let end = next_char_boundary(buffer, *cursor);
+    buffer.drain(*cursor..end);
+}
+
+fn move_cursor_left(buffer: &str, cursor: &mut usize) {
+    if *cursor > 0 {
+        *cursor = previous_char_boundary(buffer, *cursor);
+    }
+}
+
+fn move_cursor_right(buffer: &str, cursor: &mut usize) {
+    if *cursor < buffer.len() {
+        *cursor = next_char_boundary(buffer, *cursor);
+    }
+}
+
+fn restore_search_context(app: &mut AppState) {
+    load_browser_dir(app, app.search.last_browser_dir.clone());
+    let dir_count = app.browser_entries.iter().filter(|entry| entry.is_dir).count();
+    app.selected_index = if dir_count == 0 {
+        0
+    } else {
+        app.search.last_browser_selected.min(dir_count - 1)
+    };
+    app.active_album_dir = app.search.last_active_album_dir.clone();
+    app.album_entries = app.search.last_album_entries.clone();
+    app.album_selected = if app.album_entries.is_empty() {
+        0
+    } else {
+        app.search
+            .last_album_selected
+            .min(app.album_entries.len() - 1)
+    };
+    app.focus = app.search.last_focus;
+}
+
+fn merge_search_entries(app: &mut AppState, entries: Vec<app::SearchEntry>) {
+    for entry in entries {
+        if let Some(existing) = app
+            .search
+            .index_entries
+            .iter_mut()
+            .find(|existing| existing.path == entry.path)
+        {
+            *existing = entry;
+        } else {
+            app.search.index_entries.push(entry);
+        }
+    }
+}
+
+fn load_browser_dir(app: &mut AppState, dir: PathBuf) {
+    app.current_dir = dir;
+    app.browser_entries = fs::read_dir(&app.current_dir).unwrap_or_default();
+    app.selected_index = 0;
+    app.selection_anchor_tick = app.ui_tick;
+}
+
+fn sync_album_for_directory(app: &mut AppState, dir: &std::path::Path) {
+    if let Ok(Some(tracks)) = fs::detect_loose_tracks(dir) {
+        app.active_album_dir = Some(dir.to_path_buf());
+        app.album_entries = tracks;
+        app.album_selected = 0;
+    } else {
+        app.active_album_dir = None;
+        app.album_entries.clear();
+        app.album_selected = 0;
+    }
+}
+
+fn jump_to_track_path(app: &mut AppState, track_path: &std::path::Path) {
+    let Some(track_dir) = track_path.parent() else {
+        return;
+    };
+
+    if !track_dir.starts_with(&app.root_dir) {
+        return;
+    }
+
+    let track_name = track_path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or_default();
+
+    if let Ok(Some(tracks)) = fs::detect_album(track_dir) {
+        let browser_dir = track_dir.parent().unwrap_or(&app.root_dir).to_path_buf();
+        load_browser_dir(app, browser_dir);
+
+        let browser_dirs: Vec<_> = app
+            .browser_entries
+            .iter()
+            .filter(|e| e.is_dir)
+            .collect();
+
+        if let Some(dir_name) = track_dir.file_name().and_then(|s| s.to_str())
+            && let Some(index) = browser_dirs.iter().position(|e| e.name == dir_name)
+        {
+            app.selected_index = index;
+        }
+
+        app.active_album_dir = Some(track_dir.to_path_buf());
+        app.album_entries = tracks;
+        app.album_selected = app
+            .album_entries
+            .iter()
+            .position(|entry| entry.name == track_name)
+            .unwrap_or(0);
+    } else {
+        load_browser_dir(app, track_dir.to_path_buf());
+        sync_album_for_directory(app, track_dir);
+        app.album_selected = app
+            .album_entries
+            .iter()
+            .position(|entry| entry.name == track_name)
+            .unwrap_or(0);
+    }
+
+    app.focus = FocusPane::Album;
+}
+
+fn handle_tick(app: &mut AppState) {
+    app.ui_tick = app.ui_tick.wrapping_add(1);
+    app.player.poll_metrics();
+
+    while let Ok(message) = app.search_rx.try_recv() {
+        match message {
+            SearchMessage::Batch { entries, scanned } => {
+                merge_search_entries(app, entries);
+                app.search.status = SearchStatus::Indexing { scanned };
+                refresh_search_results(app);
+            }
+            SearchMessage::EnrichedBatch { entries } => {
+                merge_search_entries(app, entries);
+                refresh_search_results(app);
+            }
+            SearchMessage::Upsert { entry } => {
+                merge_search_entries(app, vec![entry]);
+                refresh_search_results(app);
+            }
+            SearchMessage::Finished { scanned } => {
+                app.search.status = SearchStatus::Ready;
+                debug!(
+                    scanned,
+                    indexed = app.search.index_entries.len(),
+                    "Search indexing complete"
+                );
+                refresh_search_results(app);
+            }
+            SearchMessage::Failed(error) => {
+                app.search.status = SearchStatus::Failed(error);
+                refresh_search_results(app);
+            }
+        }
+    }
+
+    if let Ok(result) = app.lyrics_rx.try_recv() {
+        match result {
+            LyricsFetchResult::RawLrc {
+                request_id,
+                path,
+                contents,
+            } => {
+                let is_current = request_id == app.lyrics_request_id;
+
+                debug!(
+                    path = %path.display(),
+                    bytes = contents.len(),
+                    current = is_current,
+                    "Lyrics fetch succeeded"
+                );
+
+                let lrc_path = path.with_extension("lrc");
+                let tmp = lrc_path.with_extension("lrc.tmp");
+
+                if std::fs::write(&tmp, &contents).is_ok()
+                    && std::fs::rename(&tmp, &lrc_path).is_ok()
+                {
+                    debug!(
+                        path = %lrc_path.display(),
+                        current = is_current,
+                        "Lyrics written to sidecar file"
+                    );
+
+                    if is_current {
+                        app.lyrics_pending_cache_key = None;
+
+                        if let Ok(lines) = crate::lyrics::parse_lrc(&lrc_path) {
+                            if !lines.is_empty() {
+                                app.lyrics = LyricsStatus::Loaded(LyricsState::new(lines));
+                                app.lyric_scroll = 0;
+                            } else {
+                                app.lyrics = LyricsStatus::None;
+                            }
+                        } else {
+                            app.lyrics = LyricsStatus::None;
+                        }
+                    } else {
+                        trace!(
+                            request_id,
+                            current = app.lyrics_request_id,
+                            "Stale lyrics fetch — saved to disk only"
+                        );
+                    }
+                } else if is_current {
+                    app.lyrics = LyricsStatus::None;
+                }
+            }
+            LyricsFetchResult::NotFound { request_id } => {
+                if request_id != app.lyrics_request_id {
+                    trace!(
+                        request_id,
+                        current = app.lyrics_request_id,
+                        "Ignoring stale lyrics fetch result"
+                    );
+                } else {
+                    if let Some(key) = app.lyrics_pending_cache_key.take() {
+                        trace!(
+                            artist = %key.artist,
+                            title = %key.title,
+                            "Inserting lyrics negative cache entry"
+                        );
+                        app.lyrics_negative_cache.insert(key);
+                    }
+
+                    app.lyrics = LyricsStatus::None;
+                }
+            }
+            LyricsFetchResult::Failed { request_id } => {
+                if request_id != app.lyrics_request_id {
+                    trace!(
+                        request_id,
+                        current = app.lyrics_request_id,
+                        "Ignoring stale lyrics fetch result"
+                    );
+                } else {
+                    app.lyrics_pending_cache_key = None;
+                    app.lyrics = LyricsStatus::None;
+                }
+            }
+        }
+    }
+
+    if let Ok(job) = app.jobs_rx.try_recv() {
+        match job {
+            JobResult::DownloadStarted { url } => {
+                tracing::info!(url = %url, "Download job started");
+            }
+            JobResult::DownloadFinished { url, temp_path } => {
+                tracing::info!(
+                    url = %url,
+                    path = %temp_path.display(),
+                    "Download job finished"
+                );
+
+                let library_root = app.root_dir.clone();
+
+                match crate::fs::normalize::normalize_downloaded_track(
+                    &temp_path,
+                    &library_root,
+                ) {
+                    Ok(normalized) => {
+                        tracing::info!(
+                            from = %temp_path.display(),
+                            to = %normalized.final_path.display(),
+                            artist = %normalized.artist,
+                            title = %normalized.title,
+                            "Track normalized successfully"
+                        );
+
+                        spawn_index_update(
+                            app.root_dir.clone(),
+                            normalized.final_path.clone(),
+                            app.search_tx.clone(),
+                        );
+                    }
+                    Err(err) => {
+                        tracing::warn!(
+                            path = %temp_path.display(),
+                            error = %err,
+                            "Track moved but metadata write failed"
+                        );
+                    }
+                }
+            }
+            JobResult::DownloadFailed { url, error } => {
+                tracing::error!(
+                    url = %url,
+                    error = %error,
+                    "Download job failed"
+                );
+            }
+        }
+    }
+
+    if let (LyricsStatus::Loaded(lyrics), Some(position)) =
+        (&mut app.lyrics, app.player.metrics.position)
+    {
+        let prev_index = lyrics.current_index;
+        lyrics.update(position);
+
+        if lyrics.current_index != prev_index {
+            trace!(
+                index = lyrics.current_index,
+                time = position,
+                "Lyric line advanced"
+            );
+            app.lyric_scroll = lyrics.current_index;
+        }
+    }
+
+    if app.player.is_track_finished() {
+        debug!("Track finished — auto advancing");
+        play_next_or_stop(app);
+    }
+}
+
 /// --------------------------------------------------
 /// Main application loop
 /// --------------------------------------------------
 fn run_app() -> std::io::Result<()> {
     let (lyrics_tx, lyrics_rx) = std::sync::mpsc::channel();
+    let (search_tx, search_rx) = std::sync::mpsc::channel();
     let (jobs_tx, jobs_rx) = std::sync::mpsc::channel();
-    let mut app = AppState::new(lyrics_rx, lyrics_tx, jobs_rx, jobs_tx);
+    let mut app = AppState::new(lyrics_rx, lyrics_tx, search_rx, search_tx.clone(), jobs_rx, jobs_tx);
     let backend = CrosstermBackend::new(stdout());
     let mut terminal = Terminal::new(backend)?;
 
     app.browser_entries = fs::read_dir(&app.current_dir).unwrap_or_default();
+    app.search.status = SearchStatus::Indexing { scanned: 0 };
+    spawn_indexer(app.root_dir.clone(), search_tx);
 
     if let Ok(Some(tracks)) = fs::detect_loose_tracks(&app.current_dir) {
         app.active_album_dir = Some(app.current_dir.clone());
@@ -281,12 +652,15 @@ fn run_app() -> std::io::Result<()> {
     }
 
     loop {
-        let in_command = matches!(app.input_mode, InputMode::Command(_));
-        let event = match input::poll_event(Duration::from_millis(10), in_command) {
+        let event = match input::poll_event(Duration::from_millis(10), &app.input_mode) {
             Ok(Some(ev)) => ev,
             Ok(None) => AppEvent::Tick,
             Err(err) => return Err(err),
         };
+
+        if matches!(event, AppEvent::Tick) {
+            handle_tick(&mut app);
+        }
 
         match &mut app.input_mode {
             InputMode::Command(_) => {
@@ -297,17 +671,44 @@ fn run_app() -> std::io::Result<()> {
 
                     AppEvent::CommandChar(c) => {
                         if let InputMode::Command(cmd) = &mut app.input_mode {
-                            cmd.buffer.insert(cmd.cursor, c);
-                            cmd.cursor += 1;
+                            insert_char(&mut cmd.buffer, &mut cmd.cursor, c);
                         }
                     }
 
                     AppEvent::CommandBackspace => {
                         if let InputMode::Command(cmd) = &mut app.input_mode
-                            && cmd.cursor > 0
                         {
-                            cmd.cursor -= 1;
-                            cmd.buffer.remove(cmd.cursor);
+                            backspace_char(&mut cmd.buffer, &mut cmd.cursor);
+                        }
+                    }
+
+                    AppEvent::TextMoveLeft => {
+                        if let InputMode::Command(cmd) = &mut app.input_mode {
+                            move_cursor_left(&cmd.buffer, &mut cmd.cursor);
+                        }
+                    }
+
+                    AppEvent::TextMoveRight => {
+                        if let InputMode::Command(cmd) = &mut app.input_mode {
+                            move_cursor_right(&cmd.buffer, &mut cmd.cursor);
+                        }
+                    }
+
+                    AppEvent::TextDelete => {
+                        if let InputMode::Command(cmd) = &mut app.input_mode {
+                            delete_char(&mut cmd.buffer, &mut cmd.cursor);
+                        }
+                    }
+
+                    AppEvent::TextMoveHome => {
+                        if let InputMode::Command(cmd) = &mut app.input_mode {
+                            cmd.cursor = 0;
+                        }
+                    }
+
+                    AppEvent::TextMoveEnd => {
+                        if let InputMode::Command(cmd) = &mut app.input_mode {
+                            cmd.cursor = cmd.buffer.len();
                         }
                     }
 
@@ -451,9 +852,94 @@ fn run_app() -> std::io::Result<()> {
                 }
             }
 
+            InputMode::Search => match event {
+                AppEvent::ExitSearchMode => {
+                    restore_search_context(&mut app);
+                    app.input_mode = InputMode::Normal;
+                }
+
+                AppEvent::SearchChar(c) => {
+                    insert_char(&mut app.search.query, &mut app.search.cursor, c);
+                    refresh_search_results(&mut app);
+                }
+
+                AppEvent::SearchBackspace => {
+                    backspace_char(&mut app.search.query, &mut app.search.cursor);
+                    refresh_search_results(&mut app);
+                }
+
+                AppEvent::SearchMoveUp => {
+                    if app.search.selected > 0 {
+                        app.search.selected -= 1;
+                        app.selection_anchor_tick = app.ui_tick;
+                    }
+                }
+
+                AppEvent::SearchMoveDown => {
+                    if app.search.selected + 1 < app.search.results.len() {
+                        app.search.selected += 1;
+                        app.selection_anchor_tick = app.ui_tick;
+                    }
+                }
+
+                AppEvent::SearchActivate => {
+                    let path = app
+                        .search
+                        .results
+                        .get(app.search.selected)
+                        .map(|entry| entry.path.clone());
+
+                    if let Some(path) = path {
+                        jump_to_track_path(&mut app, &path);
+                        let index = app.album_selected;
+                        play_album_index(&mut app, index);
+                        app.input_mode = InputMode::Normal;
+                    }
+                }
+
+                AppEvent::TextMoveLeft => {
+                    move_cursor_left(&app.search.query, &mut app.search.cursor);
+                }
+
+                AppEvent::TextMoveRight => {
+                    move_cursor_right(&app.search.query, &mut app.search.cursor);
+                }
+
+                AppEvent::TextDelete => {
+                    delete_char(&mut app.search.query, &mut app.search.cursor);
+                    refresh_search_results(&mut app);
+                }
+
+                AppEvent::TextMoveHome => {
+                    app.search.cursor = 0;
+                }
+
+                AppEvent::TextMoveEnd => {
+                    app.search.cursor = app.search.query.len();
+                }
+
+                AppEvent::Tick => {}
+
+                // Ignore non-search events while the search bar is focused.
+                _ => {}
+            },
+
             // -----------------------------------------------------------------
             InputMode::Normal => {
                 match event {
+                    AppEvent::EnterSearchMode => {
+                        app.search.query.clear();
+                        app.search.cursor = 0;
+                        app.search.selected = 0;
+                        app.search.last_focus = app.focus;
+                        app.search.last_browser_dir = app.current_dir.clone();
+                        app.search.last_browser_selected = app.selected_index;
+                        app.search.last_active_album_dir = app.active_album_dir.clone();
+                        app.search.last_album_entries = app.album_entries.clone();
+                        app.search.last_album_selected = app.album_selected;
+                        refresh_search_results(&mut app);
+                        app.input_mode = InputMode::Search;
+                    }
                     AppEvent::EnterCommandMode => {
                         app.input_mode = InputMode::Command(CommandState {
                             buffer: String::new(),
@@ -466,192 +952,7 @@ fn run_app() -> std::io::Result<()> {
                         break;
                     }
 
-                    AppEvent::Tick => {
-                        // Update UI tick
-                        app.ui_tick = app.ui_tick.wrapping_add(1);
-                        app.player.poll_metrics();
-
-                        // Resolve background lyrics fetch (non-blocking)
-                        if let Ok(result) = app.lyrics_rx.try_recv() {
-                            match result {
-                                LyricsFetchResult::RawLrc {
-                                    request_id,
-                                    path,
-                                    contents,
-                                } => {
-                                    let is_current = request_id == app.lyrics_request_id;
-
-                                    debug!(
-                                        path = %path.display(),
-                                        bytes = contents.len(),
-                                        current = is_current,
-                                        "Lyrics fetch succeeded"
-                                    );
-
-                                    // Always write .lrc file (even if stale)
-                                    let lrc_path = path.with_extension("lrc");
-                                    let tmp = lrc_path.with_extension("lrc.tmp");
-
-                                    if std::fs::write(&tmp, &contents).is_ok()
-                                        && std::fs::rename(&tmp, &lrc_path).is_ok()
-                                    {
-                                        debug!(
-                                            path = %lrc_path.display(),
-                                            current = is_current,
-                                            "Lyrics written to sidecar file"
-                                        );
-
-                                        // Only update UI if this is the current track
-                                        if is_current {
-                                            app.lyrics_pending_cache_key = None;
-
-                                            if let Ok(lines) = crate::lyrics::parse_lrc(&lrc_path) {
-                                                if !lines.is_empty() {
-                                                    app.lyrics = LyricsStatus::Loaded(
-                                                        LyricsState::new(lines),
-                                                    );
-                                                    app.lyric_scroll = 0;
-                                                } else {
-                                                    app.lyrics = LyricsStatus::None;
-                                                }
-                                            } else {
-                                                app.lyrics = LyricsStatus::None;
-                                            }
-                                        } else {
-                                            trace!(
-                                                request_id,
-                                                current = app.lyrics_request_id,
-                                                "Stale lyrics fetch — saved to disk only"
-                                            );
-                                        }
-                                    } else if is_current {
-                                        // Write failed AND this was current
-                                        app.lyrics = LyricsStatus::None;
-                                    }
-                                }
-
-                                LyricsFetchResult::NotFound { request_id } => {
-                                    if request_id != app.lyrics_request_id {
-                                        trace!(
-                                            request_id,
-                                            current = app.lyrics_request_id,
-                                            "Ignoring stale lyrics fetch result"
-                                        );
-                                        continue;
-                                    }
-
-                                    if let Some(key) = app.lyrics_pending_cache_key.take() {
-                                        trace!(
-                                            artist = %key.artist,
-                                            title = %key.title,
-                                            "Inserting lyrics negative cache entry"
-                                        );
-                                        app.lyrics_negative_cache.insert(key);
-                                    }
-
-                                    app.lyrics = LyricsStatus::None;
-                                }
-
-                                LyricsFetchResult::Failed { request_id } => {
-                                    if request_id != app.lyrics_request_id {
-                                        trace!(
-                                            request_id,
-                                            current = app.lyrics_request_id,
-                                            "Ignoring stale lyrics fetch result"
-                                        );
-                                        continue;
-                                    }
-
-                                    app.lyrics_pending_cache_key = None;
-                                    app.lyrics = LyricsStatus::None;
-                                }
-                            }
-                        }
-
-                        // --------------------------------------------------
-                        // Resolve background jobs (downloads, normalization)
-                        // --------------------------------------------------
-                        if let Ok(job) = app.jobs_rx.try_recv() {
-                            match job {
-                                crate::event::jobs::JobResult::DownloadStarted { url } => {
-                                    tracing::info!(
-                                        url = %url,
-                                        "Download job started"
-                                    );
-                                }
-
-                                crate::event::jobs::JobResult::DownloadFinished {
-                                    url,
-                                    temp_path,
-                                } => {
-                                    tracing::info!(
-                                        url = %url,
-                                        path = %temp_path.display(),
-                                        "Download job finished"
-                                    );
-
-                                    // ---------------------------------------------
-                                    // Normalize downloaded track
-                                    // ---------------------------------------------
-                                    let library_root = app.root_dir.clone();
-
-                                    match crate::fs::normalize::normalize_downloaded_track(
-                                        &temp_path,
-                                        &library_root,
-                                    ) {
-                                        Ok(normalized) => {
-                                            tracing::info!(
-                                                from = %temp_path.display(),
-                                                to = %normalized.final_path.display(),
-                                                artist = %normalized.artist,
-                                                title = %normalized.title,
-                                                "Track normalized successfully"
-                                            );
-                                        }
-
-                                        Err(err) => {
-                                            tracing::warn!(
-                                                path = %temp_path.display(),
-                                                error = %err,
-                                                "Track moved but metadata write failed"
-                                            );
-                                        }
-                                    }
-                                }
-
-                                crate::event::jobs::JobResult::DownloadFailed { url, error } => {
-                                    tracing::error!(
-                                        url = %url,
-                                        error = %error,
-                                        "Download job failed"
-                                    );
-                                }
-                            }
-                        }
-
-                        // Update lyrics state
-                        if let (LyricsStatus::Loaded(lyrics), Some(position)) =
-                            (&mut app.lyrics, app.player.metrics.position)
-                        {
-                            let prev_index = lyrics.current_index;
-                            lyrics.update(position);
-
-                            if lyrics.current_index != prev_index {
-                                trace!(
-                                    index = lyrics.current_index,
-                                    time = position,
-                                    "Lyric line advanced"
-                                );
-                                app.lyric_scroll = lyrics.current_index;
-                            }
-                        }
-
-                        // Auto-advance when track finishes
-                        if app.player.is_track_finished() {
-                            debug!("Track finished — auto advancing");
-                            play_next_or_stop(&mut app);
-                        }
-                    }
+                    AppEvent::Tick => {}
 
                     // -----------------------------------------------------------------
                     // Focus switching
@@ -852,7 +1153,11 @@ fn run_app() -> std::io::Result<()> {
                     | AppEvent::CommandChar(_)
                     | AppEvent::CommandBackspace
                     | AppEvent::SubmitCommand
-                    | AppEvent::EnterSearchMode
+                    | AppEvent::TextMoveLeft
+                    | AppEvent::TextMoveRight
+                    | AppEvent::TextDelete
+                    | AppEvent::TextMoveHome
+                    | AppEvent::TextMoveEnd
                     | AppEvent::ExitSearchMode
                     | AppEvent::SearchChar(_)
                     | AppEvent::SearchBackspace
@@ -867,4 +1172,61 @@ fn run_app() -> std::io::Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn previous_and_next_char_boundaries_handle_unicode() {
+        let text = "A—B";
+
+        assert_eq!(next_char_boundary(text, 0), 1);
+        assert_eq!(next_char_boundary(text, 1), 4);
+        assert_eq!(previous_char_boundary(text, 4), 1);
+        assert_eq!(previous_char_boundary(text, text.len()), 4);
+    }
+
+    #[test]
+    fn insert_and_backspace_char_track_utf8_cursor_positions() {
+        let mut buffer = String::from("AB");
+        let mut cursor = 1;
+
+        insert_char(&mut buffer, &mut cursor, '—');
+        assert_eq!(buffer, "A—B");
+        assert_eq!(cursor, 4);
+
+        backspace_char(&mut buffer, &mut cursor);
+        assert_eq!(buffer, "AB");
+        assert_eq!(cursor, 1);
+    }
+
+    #[test]
+    fn delete_char_removes_full_unicode_scalar() {
+        let mut buffer = String::from("A—B");
+        let mut cursor = 1;
+
+        delete_char(&mut buffer, &mut cursor);
+        assert_eq!(buffer, "AB");
+        assert_eq!(cursor, 1);
+    }
+
+    #[test]
+    fn cursor_movement_stops_at_character_boundaries() {
+        let buffer = String::from("A—B");
+        let mut cursor = 0;
+
+        move_cursor_right(&buffer, &mut cursor);
+        assert_eq!(cursor, 1);
+
+        move_cursor_right(&buffer, &mut cursor);
+        assert_eq!(cursor, 4);
+
+        move_cursor_left(&buffer, &mut cursor);
+        assert_eq!(cursor, 1);
+
+        move_cursor_left(&buffer, &mut cursor);
+        assert_eq!(cursor, 0);
+    }
 }

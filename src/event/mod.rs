@@ -48,6 +48,11 @@ pub enum AppEvent {
     CommandChar(char),
     CommandBackspace,
     SubmitCommand,
+    TextMoveLeft,
+    TextMoveRight,
+    TextDelete,
+    TextMoveHome,
+    TextMoveEnd,
 
     // Search mode events
     EnterSearchMode,

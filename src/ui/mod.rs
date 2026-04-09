@@ -20,7 +20,7 @@ use ratatui::{
     widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph},
 };
 
-use crate::app::{AppState, FocusPane, InputMode, LyricsStatus};
+use crate::app::{AppState, FocusPane, InputMode, LyricsStatus, SearchStatus};
 use crate::player::PlaybackState;
 use unicode_width::UnicodeWidthStr;
 
@@ -28,11 +28,43 @@ use unicode_width::UnicodeWidthStr;
 // Small helpers
 // -----------------------------------------------------------------------------
 fn truncate_middle(s: &str, max_len: usize) -> String {
-    if s.len() <= max_len {
+    let width = UnicodeWidthStr::width(s);
+    if width <= max_len {
         return s.to_string();
     }
-    let keep = max_len / 2 - 1;
-    format!("{}…{}", &s[..keep], &s[s.len() - keep..])
+
+    if max_len <= 1 {
+        return "…".to_string();
+    }
+
+    let target = max_len.saturating_sub(1);
+    let front_target = target / 2;
+    let back_target = target.saturating_sub(front_target);
+
+    let mut front = String::new();
+    let mut front_width = 0;
+    for ch in s.chars() {
+        let ch_width = UnicodeWidthStr::width(ch.to_string().as_str());
+        if front_width + ch_width > front_target {
+            break;
+        }
+        front.push(ch);
+        front_width += ch_width;
+    }
+
+    let chars: Vec<char> = s.chars().collect();
+    let mut back = String::new();
+    let mut back_width = 0;
+    for ch in chars.iter().rev() {
+        let ch_width = UnicodeWidthStr::width(ch.to_string().as_str());
+        if back_width + ch_width > back_target {
+            break;
+        }
+        back.insert(0, *ch);
+        back_width += ch_width;
+    }
+
+    format!("{front}…{back}")
 }
 
 fn format_time(seconds: Option<f64>) -> String {
@@ -146,21 +178,45 @@ fn wrap_text_to_width(text: &str, max_width: usize) -> Vec<String> {
 }
 
 fn render_command_bar(frame: &mut Frame, area: Rect, app: &AppState) {
-    use crate::app::InputMode;
+    let cursor_visible = (app.ui_tick / 25).is_multiple_of(2);
+    let cursor = if cursor_visible { '█' } else { ' ' };
 
-    let InputMode::Command(cmd) = &app.input_mode else {
-        return;
+    let (title, prefix, buffer, cursor_index) = match &app.input_mode {
+        InputMode::Command(cmd) => ("Command".to_string(), ":", cmd.buffer.as_str(), cmd.cursor),
+        InputMode::Search => {
+            let title = match &app.search.status {
+                SearchStatus::Idle => "Search".to_string(),
+                SearchStatus::Indexing { scanned } => {
+                    format!("Search ({}, indexing {scanned})", app.search.results.len())
+                }
+                SearchStatus::Ready => format!("Search ({})", app.search.results.len()),
+                SearchStatus::Failed(_) => "Search (failed)".to_string(),
+            };
+            (title, "/", app.search.query.as_str(), app.search.cursor)
+        }
+        InputMode::Normal => return,
     };
 
-    let cursor_visible = (app.ui_tick / 25).is_multiple_of(2);
-    let cursor = if cursor_visible { "█" } else { " " };
+    render_text_bar(frame, area, &title, prefix, buffer, cursor_index, cursor);
+}
 
-    let text = format!("/{buffer}{cursor}", buffer = cmd.buffer, cursor = cursor,);
+fn render_text_bar(
+    frame: &mut Frame,
+    area: Rect,
+    title: &str,
+    prefix: &str,
+    buffer: &str,
+    cursor_index: usize,
+    cursor: char,
+) {
+    let mut text = format!("{prefix}{buffer}");
+    let insert_at = prefix.len() + cursor_index.min(buffer.len());
+    text.insert(insert_at, cursor);
 
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Yellow))
-        .title("Command");
+        .title(title);
 
     frame.render_widget(
         Paragraph::new(text)
@@ -170,10 +226,127 @@ fn render_command_bar(frame: &mut Frame, area: Rect, app: &AppState) {
     );
 }
 
+fn render_search_results(frame: &mut Frame, area: Rect, app: &AppState) {
+    let selection_label = if app.search.results.is_empty() {
+        "0/0".to_string()
+    } else {
+        format!("{}/{}", app.search.selected + 1, app.search.results.len())
+    };
+
+    let title = match &app.search.status {
+        SearchStatus::Idle => format!("Search Results ({selection_label}) - Enter plays"),
+        SearchStatus::Indexing { scanned } => {
+            format!("Search Results ({selection_label}, indexing {scanned}) - Enter plays")
+        }
+        SearchStatus::Ready => {
+            format!("Search Results ({selection_label}) - Enter plays")
+        }
+        SearchStatus::Failed(_) => "Search Results (failed) - Enter plays".to_string(),
+    };
+
+    let block = Block::default()
+        .title(title)
+        .borders(Borders::ALL)
+        .border_style(
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+        );
+
+    if let SearchStatus::Failed(error) = &app.search.status {
+        frame.render_widget(
+            Paragraph::new(error.as_str())
+                .alignment(Alignment::Center)
+                .style(Style::default().fg(Color::Red))
+                .block(block),
+            area,
+        );
+        return;
+    }
+
+    if app.search.query.trim().is_empty() {
+        frame.render_widget(
+            Paragraph::new("Type to search by file name or path")
+                .alignment(Alignment::Center)
+                .style(Style::default().fg(Color::DarkGray))
+                .block(block),
+            area,
+        );
+        return;
+    }
+
+    if app.search.results.is_empty() {
+        frame.render_widget(
+            Paragraph::new("No matches")
+                .alignment(Alignment::Center)
+                .style(Style::default().fg(Color::DarkGray))
+                .block(block),
+            area,
+        );
+        return;
+    }
+
+    let items: Vec<ListItem> = app
+        .search
+        .results
+        .iter()
+        .enumerate()
+        .map(|(i, entry)| {
+            let primary_width = area.width.saturating_sub(6) as usize;
+            let path_width = area.width.saturating_sub(4) as usize;
+            let primary = match (&entry.artist, &entry.title) {
+                (Some(artist), Some(title)) => format!("{artist} - {title}"),
+                (None, Some(title)) => title.clone(),
+                (Some(artist), None) => format!("{artist} - {}", entry.file_name),
+                (None, None) => entry.file_name.clone(),
+            };
+            let primary_text = if i == app.search.selected {
+                marquee_text(&primary, primary_width, app.ui_tick, app.selection_anchor_tick)
+            } else {
+                truncate_middle(&primary, primary_width)
+            };
+            let path_text = truncate_middle(&entry.relative_path, path_width);
+
+            ListItem::new(vec![
+                Line::from(vec![
+                    Span::raw("🎵 "),
+                    Span::styled(
+                        primary_text,
+                        Style::default().add_modifier(Modifier::BOLD),
+                    ),
+                ]),
+                Line::from(Span::styled(
+                    format!("   {path_text}"),
+                    Style::default().fg(Color::DarkGray),
+                )),
+            ])
+        })
+        .collect();
+
+    let list = List::new(items)
+        .block(block)
+        .highlight_style(
+            Style::default()
+                .bg(Color::Blue)
+                .fg(Color::Black)
+                .add_modifier(Modifier::BOLD),
+        )
+        .highlight_symbol("➤ ");
+
+    let mut state = ListState::default();
+    state.select(Some(app.search.selected));
+    frame.render_stateful_widget(list, area, &mut state);
+}
+
 // -----------------------------------------------------------------------------
 // Pane renderers
 // -----------------------------------------------------------------------------
 fn render_browser(frame: &mut Frame, area: Rect, app: &AppState) {
+    if matches!(app.input_mode, InputMode::Search) {
+        render_search_results(frame, area, app);
+        return;
+    }
+
     let items: Vec<ListItem> = app
         .browser_entries
         .iter()
@@ -478,7 +651,7 @@ pub fn draw(frame: &mut Frame, app: &AppState) {
     let size = frame.size();
     frame.render_widget(Clear, size);
 
-    let chunks = if matches!(app.input_mode, InputMode::Command(_)) {
+    let chunks = if matches!(app.input_mode, InputMode::Command(_) | InputMode::Search) {
         Layout::default()
             .direction(Direction::Vertical)
             .constraints([
@@ -561,7 +734,7 @@ pub fn draw(frame: &mut Frame, app: &AppState) {
     // -------------------------------------------------------------------------
 
     // If in command mode, we need to render the command bar above the footer
-    let footer_index = if matches!(app.input_mode, InputMode::Command(_)) {
+    let footer_index = if matches!(app.input_mode, InputMode::Command(_) | InputMode::Search) {
         render_command_bar(frame, chunks[2], app);
         3
     } else {
@@ -640,7 +813,7 @@ pub fn draw(frame: &mut Frame, app: &AppState) {
     // Controls hint
     frame.render_widget(
         Paragraph::new(
-            "←/→ seek  < prev  > next   s stop   space pause   b browser   t tracks   q quit",
+            "←/→ seek  < prev  > next   s stop   space pause   / search   : command   q quit",
         )
         .alignment(Alignment::Center)
         .style(Style::default().fg(Color::DarkGray)),

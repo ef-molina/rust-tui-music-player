@@ -18,6 +18,7 @@ use crate::lyrics::LyricsState;
 use crate::lyrics_fetch::LyricsFetchResult;
 use crate::metadata::model::TrackMetadata;
 use crate::player::Player;
+use crate::search::SearchMessage;
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, Sender};
@@ -82,9 +83,64 @@ pub struct CommandState {
     pub cursor: usize,
 }
 
+#[derive(Debug, Clone)]
+pub struct SearchEntry {
+    pub path: PathBuf,
+    pub relative_path: String,
+    pub file_name: String,
+    pub artist: Option<String>,
+    pub title: Option<String>,
+    pub album: Option<String>,
+    pub search_blob: String,
+}
+
+#[derive(Debug, Clone)]
+pub enum SearchStatus {
+    Idle,
+    Indexing { scanned: usize },
+    Ready,
+    Failed(String),
+}
+
+#[derive(Debug, Clone)]
+pub struct SearchState {
+    pub query: String,
+    pub cursor: usize,
+    pub selected: usize,
+    pub index_entries: Vec<SearchEntry>,
+    pub results: Vec<SearchEntry>,
+    pub status: SearchStatus,
+    pub last_focus: FocusPane,
+    pub last_browser_dir: PathBuf,
+    pub last_browser_selected: usize,
+    pub last_active_album_dir: Option<PathBuf>,
+    pub last_album_entries: Vec<BrowserEntry>,
+    pub last_album_selected: usize,
+}
+
+impl SearchState {
+    pub fn new(current_dir: PathBuf, selected_index: usize) -> Self {
+        Self {
+            query: String::new(),
+            cursor: 0,
+            selected: 0,
+            index_entries: Vec::new(),
+            results: Vec::new(),
+            status: SearchStatus::Idle,
+            last_focus: FocusPane::Browser,
+            last_browser_dir: current_dir,
+            last_browser_selected: selected_index,
+            last_active_album_dir: None,
+            last_album_entries: Vec::new(),
+            last_album_selected: 0,
+        }
+    }
+}
+
 pub enum InputMode {
     Normal,
     Command(CommandState),
+    Search,
 }
 
 pub struct AppState {
@@ -142,6 +198,13 @@ pub struct AppState {
     /// Current input mode (normal vs command)
     pub input_mode: InputMode,
 
+    /// Search query, results, and last pre-search browser context
+    pub search: SearchState,
+
+    /// Receiver and sender for background search indexing
+    pub search_rx: Receiver<SearchMessage>,
+    pub search_tx: Sender<SearchMessage>,
+
     /// Background job results (downloads, normalization, etc.)
     pub jobs_rx: Receiver<JobResult>,
     pub jobs_tx: Sender<JobResult>,
@@ -152,6 +215,8 @@ impl AppState {
     pub fn new(
         lyrics_rx: Receiver<LyricsFetchResult>,
         lyrics_tx: Sender<LyricsFetchResult>,
+        search_rx: Receiver<SearchMessage>,
+        search_tx: Sender<SearchMessage>,
         jobs_rx: Receiver<JobResult>,
         jobs_tx: Sender<JobResult>,
     ) -> Self {
@@ -163,7 +228,7 @@ impl AppState {
 
         Self {
             root_dir: root_dir.clone(),
-            current_dir: root_dir,
+            current_dir: root_dir.clone(),
             browser_entries: Vec::new(),
             selected_index: 0,
             focus: FocusPane::Browser,
@@ -184,6 +249,9 @@ impl AppState {
             selection_anchor_tick: 0,
             now_playing: None,
             input_mode: InputMode::Normal,
+            search: SearchState::new(root_dir.clone(), 0),
+            search_rx,
+            search_tx,
         }
     }
 

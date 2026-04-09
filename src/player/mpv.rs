@@ -7,6 +7,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
+use std::time::{Duration, Instant};
 
 const MPV_SOCKET: &str = "/tmp/rust-tui-mpv.sock";
 
@@ -66,8 +67,20 @@ impl MpvController {
         // Ask mpv to quit cleanly (IMPORTANT)
         self.send(r#"{ "command": ["quit"] }"#);
 
-        // Give mpv a brief moment to exit on its own
-        let _ = self.child.wait();
+        // Give mpv a brief moment to exit on its own before forcing cleanup.
+        let deadline = Instant::now() + Duration::from_millis(500);
+        loop {
+            match self.child.try_wait() {
+                Ok(Some(_)) => break,
+                Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(25)),
+                Ok(None) => {
+                    let _ = self.child.kill();
+                    let _ = self.child.wait();
+                    break;
+                }
+                Err(_) => break,
+            }
+        }
 
         // Best-effort cleanup
         let _ = std::fs::remove_file(MPV_SOCKET);
@@ -87,5 +100,11 @@ impl MpvController {
 
         let json: serde_json::Value = serde_json::from_str(&line).ok()?;
         json.get("data")?.as_f64()
+    }
+}
+
+impl Drop for MpvController {
+    fn drop(&mut self) {
+        self.shutdown();
     }
 }
