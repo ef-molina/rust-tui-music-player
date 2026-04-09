@@ -33,6 +33,7 @@ This project follows [Semantic Versioning](https://semver.org/).
 - Refined header/footer hierarchy with clearer status badges and now-playing metadata
 - Larger compact lyrics pane for better readability in the split view
 - Height-driven compact lyrics rendering that fills the larger pane with more surrounding lyric context
+- Inline `:` command helper panel with discoverable command syntax and descriptions
 - Cleaner visible track labels that hide numeric filename prefixes like `01. `
 - Slower, more readable marquee timing for long labels
 - Unicode-safe text truncation in the UI to avoid crashes on multibyte characters

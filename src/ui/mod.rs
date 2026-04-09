@@ -21,6 +21,7 @@ use ratatui::{
 };
 
 use crate::app::{AppState, FocusPane, InputMode, LyricsStatus, SearchStatus, StatusLevel};
+use crate::event::commands::filtered_command_specs;
 use crate::player::PlaybackState;
 use unicode_width::UnicodeWidthStr;
 
@@ -378,6 +379,63 @@ fn render_text_bar(
             .block(block),
         area,
     );
+}
+
+fn render_command_helper(frame: &mut Frame, area: Rect, app: &AppState) {
+    let query = match &app.input_mode {
+        InputMode::Command(cmd) => cmd.buffer.as_str(),
+        _ => return,
+    };
+
+    let matches = filtered_command_specs(query);
+    let title = if query.trim().is_empty() {
+        format!("Commands ({})", matches.len())
+    } else {
+        format!("Commands ({}) for '{}'", matches.len(), query.trim())
+    };
+
+    let block = Block::default()
+        .title(title)
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(ACCENT));
+
+    if matches.is_empty() {
+        frame.render_widget(
+            Paragraph::new("No commands match")
+                .alignment(Alignment::Center)
+                .style(muted_style())
+                .block(block),
+            area,
+        );
+        return;
+    }
+
+    let items: Vec<ListItem> = matches
+        .into_iter()
+        .map(|spec| {
+            ListItem::new(vec![
+                Line::from(vec![
+                    Span::styled(
+                        spec.syntax,
+                        Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+                    ),
+                ]),
+                Line::from(Span::styled(
+                    spec.description,
+                    muted_style(),
+                )),
+            ])
+        })
+        .collect();
+
+    let list = List::new(items)
+        .block(block)
+        .highlight_style(selection_style())
+        .highlight_symbol("➤ ");
+
+    let mut state = ListState::default();
+    state.select(Some(0));
+    frame.render_stateful_widget(list, area, &mut state);
 }
 
 fn render_search_results_content(frame: &mut Frame, area: Rect, app: &AppState) {
@@ -964,6 +1022,23 @@ pub fn draw(frame: &mut Frame, app: &AppState) {
         ])
         .split(chunks[1]);
 
+    let (main_body_area, helper_area) = if matches!(app.input_mode, InputMode::Command(_)) {
+        let available_height = body_chunks[1].height.saturating_sub(1);
+        let helper_height = available_height.min(11);
+
+        if helper_height >= 5 {
+            let helper_chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Min(1), Constraint::Length(helper_height)])
+                .split(body_chunks[1]);
+            (helper_chunks[0], Some(helper_chunks[1]))
+        } else {
+            (body_chunks[1], None)
+        }
+    } else {
+        (body_chunks[1], None)
+    };
+
     render_browser(frame, body_chunks[0], app);
 
     // Right pane layout depends on focus
@@ -971,7 +1046,7 @@ pub fn draw(frame: &mut Frame, app: &AppState) {
         FocusPane::Lyrics => Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Min(1)])
-            .split(body_chunks[1]),
+            .split(main_body_area),
 
         _ => Layout::default()
             .direction(Direction::Vertical)
@@ -979,7 +1054,7 @@ pub fn draw(frame: &mut Frame, app: &AppState) {
                 Constraint::Min(5),    // album
                 Constraint::Length(9), // lyrics mini
             ])
-            .split(body_chunks[1]),
+            .split(main_body_area),
     };
 
     match app.focus {
@@ -990,6 +1065,10 @@ pub fn draw(frame: &mut Frame, app: &AppState) {
             render_album(frame, right_chunks[0], app);
             render_lyrics_mini(frame, right_chunks[1], app);
         }
+    }
+
+    if let Some(helper_area) = helper_area {
+        render_command_helper(frame, helper_area, app);
     }
 
     // -------------------------------------------------------------------------
