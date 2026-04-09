@@ -16,11 +16,35 @@ This project follows [Semantic Versioning](https://semver.org/).
 - Automatic background writing of fetched lyrics to `.lrc` files, even if the user skips tracks before fetch completion
 - Deterministic handling of stale lyrics fetches without blocking the main event loop
 
+#### Search & Library
+
+- Recursive background library indexing for music search
+- Metadata-enriched search over artist, title, album, file name, and path
+- Search result ranking that prioritizes exact metadata matches over path-only matches
+- Search result activation that jumps to and plays the selected track
+- Incremental search upserts after successful normalization so newly added tracks appear without restart
+- Bounded navigation history for browser/search flows with `Backspace` back-navigation in normal mode
+
+#### UI & Interaction
+
+- Dedicated search mode opened with `/`, including in-buffer text editing and restore-on-`Esc`
+- Centered modal search picker overlay with a dimmed backdrop
+- Dedicated statusline for indexing, downloads, lyrics fetch state, and transient feedback
+- Refined header/footer hierarchy with clearer status badges and now-playing metadata
+- Larger compact lyrics pane for better readability in the split view
+- Height-driven compact lyrics rendering that fills the larger pane with more surrounding lyric context
+- Cleaner visible track labels that hide numeric filename prefixes like `01. `
+- Slower, more readable marquee timing for long labels
+- Unicode-safe text truncation in the UI to avoid crashes on multibyte characters
+- Consistent pane styling, counts in pane titles, and richer search result presentation
+
 ### Planned
 
 - Optional persistent lyrics cache (e.g. `~/.cache/rust-tui-music-player`)
 - User-configurable controls for automatic lyrics downloading/writing
 - Improvements to album and directory name filtering
+- Responsive layout improvements for smaller terminal sizes
+- Richer metadata density in browser/track/search rows
 - Internal robustness and bug fixes identified after v0.1.0 release
 
 This release focuses on polish, correctness, and addressing known limitations

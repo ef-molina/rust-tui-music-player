@@ -679,31 +679,53 @@ fn render_lyrics_mini(frame: &mut Frame, area: Rect, app: &AppState) {
                 }
             }
 
-            // Prepend previous lyric if space allows
-            if let Some(prev) = lyrics.previous() {
-                let wrapped_prev = wrap_text_to_width(&prev.text, max_width);
-                if wrapped_prev.len() + out.len() <= max_height {
-                    let mut prev_lines = Vec::new();
-                    for row in wrapped_prev {
-                        prev_lines.push(Line::from(Span::styled(
-                            row,
-                            muted_style(),
-                        )));
-                    }
-                    prev_lines.extend(out);
-                    out = prev_lines;
-                }
-            }
+            if out.len() > max_height {
+                out.truncate(max_height);
+            } else {
+                let mut prev_index = lyrics.current_index.checked_sub(1);
+                let mut next_index = if lyrics.current_index + 1 < lyrics.lines.len() {
+                    Some(lyrics.current_index + 1)
+                } else {
+                    None
+                };
+                let mut add_previous = true;
 
-            // Append next lyric if space allows
-            if let Some(next) = lyrics.next() {
-                let wrapped_next = wrap_text_to_width(&next.text, max_width);
-                if out.len() + wrapped_next.len() <= max_height {
-                    for row in wrapped_next {
-                        out.push(Line::from(Span::styled(
-                            row,
-                            muted_style(),
-                        )));
+                while out.len() < max_height && (prev_index.is_some() || next_index.is_some()) {
+                    let mut appended = false;
+
+                    if add_previous {
+                        if let Some(index) = prev_index {
+                            let wrapped_prev = wrap_text_to_width(&lyrics.lines[index].text, max_width);
+                            if out.len() + wrapped_prev.len() <= max_height {
+                                let mut prev_lines = Vec::new();
+                                for row in wrapped_prev {
+                                    prev_lines.push(Line::from(Span::styled(row, muted_style())));
+                                }
+                                prev_lines.extend(out);
+                                out = prev_lines;
+                                appended = true;
+                            }
+                            prev_index = index.checked_sub(1);
+                        }
+                    } else if let Some(index) = next_index {
+                        let wrapped_next = wrap_text_to_width(&lyrics.lines[index].text, max_width);
+                        if out.len() + wrapped_next.len() <= max_height {
+                            for row in wrapped_next {
+                                out.push(Line::from(Span::styled(row, muted_style())));
+                            }
+                            appended = true;
+                        }
+                        next_index = if index + 1 < lyrics.lines.len() {
+                            Some(index + 1)
+                        } else {
+                            None
+                        };
+                    }
+
+                    add_previous = !add_previous;
+
+                    if !appended && prev_index.is_none() && next_index.is_none() {
+                        break;
                     }
                 }
             }
@@ -955,7 +977,7 @@ pub fn draw(frame: &mut Frame, app: &AppState) {
             .direction(Direction::Vertical)
             .constraints([
                 Constraint::Min(5),    // album
-                Constraint::Length(5), // lyrics mini
+                Constraint::Length(9), // lyrics mini
             ])
             .split(body_chunks[1]),
     };
