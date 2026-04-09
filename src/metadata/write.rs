@@ -5,10 +5,14 @@ use crate::fs::normalize::NormalizedTrack;
 
 /// Write cleaned metadata tags back to the audio file.
 ///
+/// Opus limitation:
+/// - Opus-in-Ogg does NOT support attached picture streams
+/// - yt-dlp embeds cover art as MJPEG video
+/// - We must drop video stream when rewriting metadata
+///
 /// Guarantees:
 /// - audio stream preserved
-/// - cover art preserved (if present as attached_pic stream)
-/// - only selected tags overridden
+/// - metadata rewritten deterministically
 /// - atomic replace on success
 pub fn write_clean_tags(
     path: &Path,
@@ -16,13 +20,7 @@ pub fn write_clean_tags(
 ) -> Result<(), Box<dyn std::error::Error>> {
     match path.extension().and_then(|e| e.to_str()) {
         Some("opus") => write_opus_tags_ffmpeg(path, meta),
-        _ => {
-            tracing::debug!(
-                path = %path.display(),
-                "Skipping metadata write for unsupported format"
-            );
-            Ok(())
-        }
+        _ => Ok(()),
     }
 }
 
@@ -31,20 +29,20 @@ fn write_opus_tags_ffmpeg(
     meta: &NormalizedTrack,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let tmp = temp_opus_path(path);
-
-    // Pre-clean: remove any stale temp file
     let _ = std::fs::remove_file(&tmp);
 
     let mut cmd = Command::new("ffmpeg");
     cmd.arg("-y");
     cmd.arg("-i").arg(path);
 
-    // Preserve everything
-    cmd.arg("-map_metadata").arg("0");
-    cmd.arg("-map").arg("0");
-    cmd.arg("-c").arg("copy");
+    // CRITICAL: drop attached_pic video stream
+    cmd.arg("-map").arg("0:a");
+    cmd.arg("-vn");
+    cmd.arg("-c:a").arg("copy");
 
-    // Core tags
+    // Preserve baseline metadata, override selected fields
+    cmd.arg("-map_metadata").arg("0");
+
     cmd.arg("-metadata").arg(format!("title={}", meta.title));
     cmd.arg("-metadata").arg(format!("artist={}", meta.artist));
     cmd.arg("-metadata")
@@ -62,37 +60,29 @@ fn write_opus_tags_ffmpeg(
         .arg(format!("comment=yt:{}", meta.youtube_id));
 
     cmd.stdout(Stdio::null());
-    cmd.stderr(Stdio::null());
+    cmd.stderr(Stdio::piped());
 
     cmd.arg(&tmp);
 
-    let status = cmd.status()?;
-    if !status.success() {
+    let output = cmd.output()?;
+    if !output.status.success() {
         let _ = std::fs::remove_file(&tmp);
-        return Err(format!("ffmpeg failed writing opus tags: {}", path.display()).into());
+        return Err(format!(
+            "ffmpeg failed writing opus tags: {}\n{}",
+            path.display(),
+            String::from_utf8_lossy(&output.stderr)
+        )
+        .into());
     }
 
-    // Sanity check: ffmpeg must have produced a real file
-    let tmp_meta = std::fs::metadata(&tmp)?;
-    if tmp_meta.len() == 0 {
-        let _ = std::fs::remove_file(&tmp);
-        return Err("ffmpeg produced empty opus temp file".into());
-    }
-
-    // Cross-platform safe replace
+    // Atomic replace
     let _ = std::fs::remove_file(path);
     std::fs::rename(&tmp, path)?;
-
-    // Best-effort cleanup (in case rename semantics differ)
     let _ = std::fs::remove_file(&tmp);
 
     Ok(())
 }
 
-/// Create a temp path that still ends with `.opus` so ffmpeg can infer the muxer.
-///
-/// Example:
-///   /music/N95.opus  ->  /music/N95.tmp.opus
 fn temp_opus_path(original: &Path) -> PathBuf {
     let parent = original.parent().unwrap_or_else(|| Path::new("."));
     let stem = original

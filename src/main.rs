@@ -29,12 +29,10 @@ mod ui;
 
 use crate::event::commands::{Command, parse_command};
 use crate::event::jobs::JobResult;
-use crate::fs::normalize::NormalizedTrack;
 use crate::lyrics::{LyricsState, load_for_track};
 use crate::lyrics_fetch::LyricsFetchResult;
 use crate::lyrics_fetch::lrclib::fetch_lrc;
 use crate::metadata::extract_metadata;
-use crate::metadata::model::TrackMetadata;
 use app::{AppState, CommandState, FocusPane, InputMode, LyricsCacheKey, LyricsStatus, NowPlaying};
 use crossterm::{
     execute,
@@ -62,7 +60,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // --------------------------------------------------
     // CLI: one-shot normalization mode (EARLY EXIT)
     // --------------------------------------------------
-    let mut args = std::env::args().skip(1).collect::<Vec<_>>();
+    let args = std::env::args().skip(1).collect::<Vec<_>>();
 
     if args.first().map(|s| s.as_str()) == Some("--normalize") {
         if args.len() != 2 {
@@ -221,6 +219,15 @@ fn play_album_index(app: &mut AppState, index: usize) {
                 artist = %cache_key.artist,
                 title = %cache_key.title,
                 "Spawning lyrics fetch"
+            );
+
+            debug!(
+                raw_title = %metadata.title,
+                raw_artist = %metadata.artist,
+                raw_album = ?metadata.album,
+                duration = metadata.duration_secs,
+                confidence = ?metadata.confidence,
+                "Lyrics fetch input metadata"
             );
 
             std::thread::spawn(move || {
@@ -844,7 +851,14 @@ fn run_app() -> std::io::Result<()> {
                     AppEvent::ExitCommandMode
                     | AppEvent::CommandChar(_)
                     | AppEvent::CommandBackspace
-                    | AppEvent::SubmitCommand => {}
+                    | AppEvent::SubmitCommand
+                    | AppEvent::EnterSearchMode
+                    | AppEvent::ExitSearchMode
+                    | AppEvent::SearchChar(_)
+                    | AppEvent::SearchBackspace
+                    | AppEvent::SearchMoveUp
+                    | AppEvent::SearchMoveDown
+                    | AppEvent::SearchActivate => {}
                 }
             }
         }

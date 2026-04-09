@@ -14,7 +14,7 @@
 pub mod commands;
 pub mod jobs;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(PartialEq, Eq)]
 pub enum AppEvent {
     /// Request to quit the application.
     Quit,
@@ -48,4 +48,13 @@ pub enum AppEvent {
     CommandChar(char),
     CommandBackspace,
     SubmitCommand,
+
+    // Search mode events
+    EnterSearchMode,
+    ExitSearchMode,
+    SearchChar(char),
+    SearchBackspace,
+    SearchMoveUp,
+    SearchMoveDown,
+    SearchActivate,
 }
