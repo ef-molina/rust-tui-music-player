@@ -24,9 +24,45 @@ use crate::app::{AppState, FocusPane, InputMode, LyricsStatus, SearchStatus};
 use crate::player::PlaybackState;
 use unicode_width::UnicodeWidthStr;
 
+const ACCENT: Color = Color::Rgb(102, 187, 160);
+const HIGHLIGHT_BG: Color = Color::Rgb(38, 68, 94);
+const HIGHLIGHT_FG: Color = Color::Rgb(245, 247, 250);
+const MUTED: Color = Color::Rgb(132, 145, 160);
+const SUBTLE: Color = Color::Rgb(84, 94, 108);
+const WARNING: Color = Color::Rgb(242, 201, 76);
+const DANGER: Color = Color::Rgb(242, 107, 107);
+const SCRIM: Color = Color::Rgb(8, 10, 14);
+const BADGE_BG: Color = Color::Rgb(28, 34, 42);
+
 // -----------------------------------------------------------------------------
 // Small helpers
 // -----------------------------------------------------------------------------
+fn pane_border_style(active: bool) -> Style {
+    if active {
+        Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(SUBTLE)
+    }
+}
+
+fn selection_style() -> Style {
+    Style::default()
+        .bg(HIGHLIGHT_BG)
+        .fg(HIGHLIGHT_FG)
+        .add_modifier(Modifier::BOLD)
+}
+
+fn muted_style() -> Style {
+    Style::default().fg(MUTED)
+}
+
+fn badge_span(text: &str, fg: Color) -> Span<'static> {
+    Span::styled(
+        format!(" {text} "),
+        Style::default().fg(fg).bg(BADGE_BG).add_modifier(Modifier::BOLD),
+    )
+}
+
 fn truncate_middle(s: &str, max_len: usize) -> String {
     let width = UnicodeWidthStr::width(s);
     if width <= max_len {
@@ -218,6 +254,38 @@ fn wrap_text_to_width(text: &str, max_width: usize) -> Vec<String> {
     lines
 }
 
+fn mode_label(app: &AppState) -> &'static str {
+    match app.input_mode {
+        InputMode::Normal => "Normal",
+        InputMode::Command(_) => "Command",
+        InputMode::Search => "Search",
+    }
+}
+
+fn focus_label(app: &AppState) -> &'static str {
+    match app.focus {
+        FocusPane::Browser => "Browser",
+        FocusPane::Album => "Tracks",
+        FocusPane::Lyrics => "Lyrics",
+    }
+}
+
+fn playback_badge(app: &AppState) -> (&'static str, Color) {
+    match app.player.state {
+        PlaybackState::Playing => ("Playing", ACCENT),
+        PlaybackState::Paused => ("Paused", WARNING),
+        PlaybackState::Stopped => ("Stopped", MUTED),
+    }
+}
+
+fn lyrics_title(app: &AppState) -> &'static str {
+    match app.lyrics {
+        LyricsStatus::Loading => "[L]yrics · Loading",
+        LyricsStatus::None => "[L]yrics · Unavailable",
+        LyricsStatus::Loaded(_) => "[L]yrics · Synced",
+    }
+}
+
 fn render_command_bar(frame: &mut Frame, area: Rect, app: &AppState) {
     let cursor_visible = (app.ui_tick / 25).is_multiple_of(2);
     let cursor = if cursor_visible { '█' } else { ' ' };
@@ -256,7 +324,7 @@ fn render_text_bar(
 
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Yellow))
+        .border_style(Style::default().fg(WARNING).add_modifier(Modifier::BOLD))
         .title(title);
 
     frame.render_widget(
@@ -272,7 +340,7 @@ fn render_search_results_content(frame: &mut Frame, area: Rect, app: &AppState) 
         frame.render_widget(
             Paragraph::new(error.as_str())
                 .alignment(Alignment::Center)
-                .style(Style::default().fg(Color::Red))
+                .style(Style::default().fg(DANGER))
                 .block(Block::default()),
             area,
         );
@@ -283,7 +351,7 @@ fn render_search_results_content(frame: &mut Frame, area: Rect, app: &AppState) 
         frame.render_widget(
             Paragraph::new("Type to search by artist, title, album, file name, or path")
                 .alignment(Alignment::Center)
-                .style(Style::default().fg(Color::DarkGray))
+                .style(muted_style())
                 .block(Block::default()),
             area,
         );
@@ -294,7 +362,7 @@ fn render_search_results_content(frame: &mut Frame, area: Rect, app: &AppState) 
         frame.render_widget(
             Paragraph::new("No matches")
                 .alignment(Alignment::Center)
-                .style(Style::default().fg(Color::DarkGray))
+                .style(muted_style())
                 .block(Block::default()),
             area,
         );
@@ -334,19 +402,14 @@ fn render_search_results_content(frame: &mut Frame, area: Rect, app: &AppState) 
                 ]),
                 Line::from(Span::styled(
                     format!("   {path_text}"),
-                    Style::default().fg(Color::DarkGray),
+                    muted_style(),
                 )),
             ])
         })
         .collect();
 
     let list = List::new(items)
-        .highlight_style(
-            Style::default()
-                .bg(Color::Blue)
-                .fg(Color::Black)
-                .add_modifier(Modifier::BOLD),
-        )
+        .highlight_style(selection_style())
         .highlight_symbol("➤ ");
 
     let mut state = ListState::default();
@@ -358,7 +421,7 @@ fn render_modal_backdrop(frame: &mut Frame, area: Rect) {
     frame.render_widget(
         Block::default().style(
             Style::default()
-                .bg(Color::Rgb(8, 10, 14))
+                .bg(SCRIM)
                 .add_modifier(Modifier::DIM),
         ),
         area,
@@ -385,11 +448,7 @@ fn render_search_picker(frame: &mut Frame, area: Rect, app: &AppState) {
     let block = Block::default()
         .title(title)
         .borders(Borders::ALL)
-        .border_style(
-            Style::default()
-                .fg(Color::Green)
-                .add_modifier(Modifier::BOLD),
-        );
+        .border_style(pane_border_style(true));
 
     render_modal_backdrop(frame, area);
     frame.render_widget(Clear, modal_area);
@@ -426,6 +485,7 @@ fn render_search_picker(frame: &mut Frame, area: Rect, app: &AppState) {
 // Pane renderers
 // -----------------------------------------------------------------------------
 fn render_browser(frame: &mut Frame, area: Rect, app: &AppState) {
+    let dir_count = app.browser_entries.iter().filter(|entry| entry.is_dir).count();
     let items: Vec<ListItem> = app
         .browser_entries
         .iter()
@@ -446,24 +506,13 @@ fn render_browser(frame: &mut Frame, area: Rect, app: &AppState) {
         .collect();
 
     let block = Block::default()
-        .title("[B]rowser")
+        .title(format!("[B]rowser · {dir_count}"))
         .borders(Borders::ALL)
-        .border_style(if app.focus == FocusPane::Browser {
-            Style::default()
-                .fg(Color::Green)
-                .add_modifier(Modifier::BOLD)
-        } else {
-            Style::default()
-        });
+        .border_style(pane_border_style(app.focus == FocusPane::Browser));
 
     let list = List::new(items)
         .block(block)
-        .highlight_style(
-            Style::default()
-                .bg(Color::Blue)
-                .fg(Color::Black)
-                .add_modifier(Modifier::BOLD),
-        )
+        .highlight_style(selection_style())
         .highlight_symbol("➤ ");
 
     let mut state = ListState::default();
@@ -523,33 +572,22 @@ fn render_album(frame: &mut Frame, area: Rect, app: &AppState) {
         .collect();
 
     let block = Block::default()
-        .title(title)
+        .title(format!("{title} · {}", tracks.len()))
         .borders(Borders::ALL)
-        .border_style(if app.focus == FocusPane::Album {
-            Style::default()
-                .fg(Color::Green)
-                .add_modifier(Modifier::BOLD)
-        } else {
-            Style::default()
-        });
+        .border_style(pane_border_style(app.focus == FocusPane::Album));
 
     if items.is_empty() {
         frame.render_widget(
             Paragraph::new("(No tracks)")
                 .alignment(Alignment::Center)
-                .style(Style::default().fg(Color::DarkGray))
+                .style(muted_style())
                 .block(block),
             area,
         );
     } else {
         let list = List::new(items)
             .block(block)
-            .highlight_style(
-                Style::default()
-                    .bg(Color::Blue)
-                    .fg(Color::Black)
-                    .add_modifier(Modifier::BOLD),
-            )
+            .highlight_style(selection_style())
             .highlight_symbol("➤ ");
 
         let mut state = ListState::default();
@@ -562,17 +600,20 @@ fn render_album(frame: &mut Frame, area: Rect, app: &AppState) {
 // Mini lyric renderer
 // -----------------------------------------------------------------------------
 fn render_lyrics_mini(frame: &mut Frame, area: Rect, app: &AppState) {
-    let block = Block::default().title("[L]yrics").borders(Borders::ALL);
+    let block = Block::default()
+        .title(lyrics_title(app))
+        .borders(Borders::ALL)
+        .border_style(pane_border_style(app.focus == FocusPane::Lyrics));
 
     let paragraph = match &app.lyrics {
         LyricsStatus::Loading => Paragraph::new("Loading lyrics…")
             .alignment(Alignment::Center)
-            .style(Style::default().fg(Color::DarkGray))
+            .style(muted_style())
             .block(block),
 
         LyricsStatus::None => Paragraph::new("No lyrics available")
             .alignment(Alignment::Center)
-            .style(Style::default().fg(Color::DarkGray))
+            .style(muted_style())
             .block(block),
 
         LyricsStatus::Loaded(lyrics) => {
@@ -601,7 +642,7 @@ fn render_lyrics_mini(frame: &mut Frame, area: Rect, app: &AppState) {
                     for row in wrapped_prev {
                         prev_lines.push(Line::from(Span::styled(
                             row,
-                            Style::default().fg(Color::DarkGray),
+                            muted_style(),
                         )));
                     }
                     prev_lines.extend(out);
@@ -616,7 +657,7 @@ fn render_lyrics_mini(frame: &mut Frame, area: Rect, app: &AppState) {
                     for row in wrapped_next {
                         out.push(Line::from(Span::styled(
                             row,
-                            Style::default().fg(Color::DarkGray),
+                            muted_style(),
                         )));
                     }
                 }
@@ -641,23 +682,19 @@ fn render_lyrics_full(frame: &mut Frame, area: Rect, app: &AppState) {
     }
 
     let block = Block::default()
-        .title("[L]yrics")
+        .title(lyrics_title(app))
         .borders(Borders::ALL)
-        .border_style(
-            Style::default()
-                .fg(Color::Green)
-                .add_modifier(Modifier::BOLD),
-        );
+        .border_style(pane_border_style(app.focus == FocusPane::Lyrics));
 
     let paragraph = match &app.lyrics {
         LyricsStatus::Loading => Paragraph::new("Loading lyrics…")
             .alignment(Alignment::Center)
-            .style(Style::default().fg(Color::DarkGray))
+            .style(muted_style())
             .block(block),
 
         LyricsStatus::None => Paragraph::new("No lyrics available")
             .alignment(Alignment::Center)
-            .style(Style::default().fg(Color::DarkGray))
+            .style(muted_style())
             .block(block),
 
         LyricsStatus::Loaded(lyrics) => {
@@ -666,7 +703,7 @@ fn render_lyrics_full(frame: &mut Frame, area: Rect, app: &AppState) {
             if lines.is_empty() {
                 Paragraph::new("No lyrics available")
                     .alignment(Alignment::Center)
-                    .style(Style::default().fg(Color::DarkGray))
+                    .style(muted_style())
                     .block(block)
             } else {
                 let logical_center = app.lyric_scroll.min(lines.len() - 1);
@@ -703,10 +740,10 @@ fn render_lyrics_full(frame: &mut Frame, area: Rect, app: &AppState) {
 
                         let style = if is_active {
                             Style::default()
-                                .fg(Color::Green)
+                                .fg(ACCENT)
                                 .add_modifier(Modifier::BOLD)
                         } else {
-                            Style::default().fg(Color::Gray)
+                            muted_style()
                         };
 
                         Line::from(Span::styled(v.text.clone(), style))
@@ -761,12 +798,47 @@ pub fn draw(frame: &mut Frame, app: &AppState) {
         .map(|p| format!("~/{}", p.display()))
         .unwrap_or_else(|| "~/".to_string());
 
+    let header_block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(SUBTLE));
+    let header_inner = header_block.inner(chunks[0]);
+    frame.render_widget(header_block, chunks[0]);
+
+    let header_chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Length(24),
+            Constraint::Min(12),
+            Constraint::Length(30),
+        ])
+        .split(header_inner);
+
+    let (playback_text, playback_color) = playback_badge(app);
+
     frame.render_widget(
-        Paragraph::new(format!("Rust TUI Music Player — {path_display}"))
+        Paragraph::new("Rust TUI Music Player")
+            .alignment(Alignment::Left)
+            .style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+        header_chunks[0],
+    );
+
+    frame.render_widget(
+        Paragraph::new(path_display)
             .alignment(Alignment::Center)
-            .style(Style::default().add_modifier(Modifier::BOLD))
-            .block(Block::default().borders(Borders::ALL)),
-        chunks[0],
+            .style(muted_style()),
+        header_chunks[1],
+    );
+
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            badge_span(playback_text, playback_color),
+            Span::raw(" "),
+            badge_span(mode_label(app), WARNING),
+            Span::raw(" "),
+            badge_span(focus_label(app), ACCENT),
+        ]))
+        .alignment(Alignment::Right),
+        header_chunks[2],
     );
 
     // -------------------------------------------------------------------------
@@ -822,7 +894,8 @@ pub fn draw(frame: &mut Frame, app: &AppState) {
 
     let footer_block = Block::default()
         .borders(Borders::ALL)
-        .title("[N]ow Playing");
+        .border_style(Style::default().fg(SUBTLE))
+        .title(format!("[N]ow Playing · {playback_text}"));
     let footer_inner = footer_block.inner(chunks[footer_index]);
     frame.render_widget(footer_block, chunks[footer_index]);
 
@@ -849,22 +922,30 @@ pub fn draw(frame: &mut Frame, app: &AppState) {
         .and_then(|p| p.file_name())
         .and_then(|s| s.to_str());
 
-    let track_label = playing_name
-        .map(display_track_name)
-        .map(|s| truncate_middle(&s, 40))
-        .unwrap_or_else(|| "Stopped".to_string());
-
-    let artist_label = app
+    let title_width = footer_rows[0].width.saturating_sub(6) as usize;
+    let track_label = app
         .now_playing
         .as_ref()
-        .map(|n| n.artist.as_str())
-        .unwrap_or("Unknown Artist");
+        .map(|n| n.title.trim())
+        .filter(|title| !title.is_empty())
+        .map(|title| truncate_middle(title, title_width.max(1)))
+        .or_else(|| {
+            playing_name
+                .map(display_track_name)
+                .map(|s| truncate_middle(&s, title_width.max(1)))
+        })
+        .unwrap_or_else(|| "Stopped".to_string());
 
-    // let album_label = app
-    //     .now_playing
-    //     .as_ref()
-    //     .map(|n| n.album.as_str())
-    //     .unwrap_or("");
+    let secondary_label = app
+        .now_playing
+        .as_ref()
+        .map(|n| match (n.artist.trim(), n.album.trim()) {
+            ("", "") => "Unknown Artist".to_string(),
+            (artist, "") => artist.to_string(),
+            ("", album) => album.to_string(),
+            (artist, album) => format!("{artist} • {album}"),
+        })
+        .unwrap_or_else(|| "Unknown Artist".to_string());
 
     // Track title + playback symbol
     frame.render_widget(
@@ -874,17 +955,17 @@ pub fn draw(frame: &mut Frame, app: &AppState) {
                 Style::default().fg(color).add_modifier(Modifier::BOLD),
             ),
             Span::raw(" "),
-            Span::raw(track_label),
+            Span::styled(track_label, Style::default().fg(Color::White)),
         ]))
         .alignment(Alignment::Center),
         footer_rows[0],
     );
 
-    // Artist name
+    // Artist + album metadata
     frame.render_widget(
         Paragraph::new(Line::from(Span::styled(
-            artist_label,
-            Style::default().fg(Color::DarkGray),
+            secondary_label,
+            muted_style(),
         )))
         .alignment(Alignment::Center),
         footer_rows[1],
@@ -896,7 +977,7 @@ pub fn draw(frame: &mut Frame, app: &AppState) {
             "←/→ seek  < prev  > next   s stop   space pause   / search   : command   q quit",
         )
         .alignment(Alignment::Center)
-        .style(Style::default().fg(Color::DarkGray)),
+        .style(muted_style()),
         footer_rows[2],
     );
 
@@ -911,7 +992,7 @@ pub fn draw(frame: &mut Frame, app: &AppState) {
     let time_label = format!("{} / {}", format_time(pos), format_time(dur));
     let reserved = UnicodeWidthStr::width(time_label.as_str()) + 3;
 
-    let bar_width = footer_rows[2].width.saturating_sub(reserved as u16).max(1) as usize;
+    let bar_width = footer_rows[3].width.saturating_sub(reserved as u16).max(1) as usize;
 
     let filled = (progress * bar_width as f64).round() as usize;
 
@@ -923,9 +1004,9 @@ pub fn draw(frame: &mut Frame, app: &AppState) {
 
     frame.render_widget(
         Paragraph::new(Line::from(vec![
-            Span::styled(bar, Style::default().fg(Color::Green)),
+            Span::styled(bar, Style::default().fg(ACCENT)),
             Span::raw(" "),
-            Span::styled(time_label, Style::default().fg(Color::Gray)),
+            Span::styled(time_label, muted_style()),
         ]))
         .alignment(Alignment::Center),
         footer_rows[3],
