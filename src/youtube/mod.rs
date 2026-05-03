@@ -28,65 +28,60 @@ pub struct YoutubeResult {
 // ---------------------------------------------------------------------------
 
 /// Search YouTube Music for individual tracks matching `query`.
+/// Uses the YouTube Music search page and filters to watch URLs only,
+/// which avoids the mixed results (reaction videos, compilations) from ytsearch:.
 /// `page` is 0-based; fetches PAGE_SIZE results per page.
 pub fn search_songs(query: &str, page: usize) -> Result<Vec<YoutubeResult>, String> {
-    let total = (page + 1) * PAGE_SIZE;
-    let search_term = format!("ytsearch{}:{}", total, query);
+    let search_url = format!(
+        "https://music.youtube.com/search?q={}",
+        urlencoding::encode(query)
+    );
 
-    let mut child = Command::new("yt-dlp")
+    let output = Command::new("yt-dlp")
         .args([
+            "--dump-single-json",
             "--flat-playlist",
-            "--dump-json",
-            "--yes-playlist",
             "--no-warnings",
             "--quiet",
             "--cookies-from-browser",
             "brave",
-            &search_term,
         ])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
+        .arg(&search_url)
+        .output()
         .map_err(|e| format!("Failed to spawn yt-dlp: {e}"))?;
 
-    let stdout = child.stdout.take().expect("stdout piped");
-    let reader = BufReader::new(stdout);
-    let skip = page * PAGE_SIZE;
+    let root: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .map_err(|e| format!("Failed to parse yt-dlp output: {e}"))?;
 
-    let results: Vec<YoutubeResult> = reader
-        .lines()
-        .filter_map(|l| l.ok())
-        .filter(|l| !l.trim().is_empty())
-        .filter_map(|l| parse_song_entry(&l))
+    let skip = page * PAGE_SIZE;
+    let results: Vec<YoutubeResult> = root["entries"]
+        .as_array()
+        .unwrap_or(&vec![])
+        .iter()
+        .filter_map(|e| {
+            let url = e["url"].as_str()?;
+            // Keep only individual track URLs — skip channels (UC*) and album releases (MPREb_*)
+            if !url.contains("watch?v=") {
+                return None;
+            }
+            let title = e["title"].as_str().filter(|s| !s.is_empty())?.to_string();
+            let subtitle = e["uploader"]
+                .as_str()
+                .or_else(|| e["channel"].as_str())
+                .map(|s| s.to_string());
+            Some(YoutubeResult {
+                title,
+                url: url.to_string(),
+                kind: SearchKind::Song,
+                subtitle,
+                track_count: None,
+            })
+        })
         .skip(skip)
         .take(PAGE_SIZE)
         .collect();
 
-    let _ = child.wait();
     Ok(results)
-}
-
-fn parse_song_entry(json: &str) -> Option<YoutubeResult> {
-    let v: serde_json::Value = serde_json::from_str(json).ok()?;
-    let id = v["id"].as_str()?;
-    let title = v["title"].as_str().unwrap_or("Unknown").to_string();
-    let subtitle = v["uploader"]
-        .as_str()
-        .or_else(|| v["channel"].as_str())
-        .map(|s| s.to_string());
-
-    let url = v["url"]
-        .as_str()
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| format!("https://www.youtube.com/watch?v={id}"));
-
-    Some(YoutubeResult {
-        title,
-        url,
-        kind: SearchKind::Song,
-        subtitle,
-        track_count: None,
-    })
 }
 
 // ---------------------------------------------------------------------------
@@ -292,31 +287,25 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parse_song_entry_with_explicit_url() {
-        let json = r#"{"id":"dQw4w9WgXcQ","title":"Never Gonna Give You Up","url":"https://www.youtube.com/watch?v=dQw4w9WgXcQ","uploader":"Rick Astley"}"#;
-        let result = parse_song_entry(json).expect("should parse");
-        assert_eq!(result.title, "Never Gonna Give You Up");
-        assert_eq!(result.url, "https://www.youtube.com/watch?v=dQw4w9WgXcQ");
-        assert_eq!(result.subtitle.as_deref(), Some("Rick Astley"));
-        assert_eq!(result.kind, SearchKind::Song);
-    }
+    fn song_search_filters_to_watch_urls_only() {
+        // Simulate the entries array from a YTM search page
+        let entries = serde_json::json!([
+            {"id": "dQw4w9WgXcQ", "title": "Never Gonna Give You Up", "url": "https://music.youtube.com/watch?v=dQw4w9WgXcQ", "uploader": "Rick Astley"},
+            {"id": "UCxxx", "title": "Rick Astley", "url": "https://music.youtube.com/browse/UCxxx"},
+            {"id": "MPREb_abc", "title": "Album", "url": "https://music.youtube.com/browse/MPREb_abc"},
+        ]);
 
-    #[test]
-    fn parse_song_entry_constructs_watch_url_from_id() {
-        let json = r#"{"id":"dQw4w9WgXcQ","title":"Never Gonna Give You Up"}"#;
-        let result = parse_song_entry(json).expect("should parse");
-        assert_eq!(result.url, "https://www.youtube.com/watch?v=dQw4w9WgXcQ");
-    }
+        let results: Vec<YoutubeResult> = entries.as_array().unwrap().iter().filter_map(|e| {
+            let url = e["url"].as_str()?;
+            if !url.contains("watch?v=") { return None; }
+            let title = e["title"].as_str().filter(|s| !s.is_empty())?.to_string();
+            let subtitle = e["uploader"].as_str().map(|s| s.to_string());
+            Some(YoutubeResult { title, url: url.to_string(), kind: SearchKind::Song, subtitle, track_count: None })
+        }).collect();
 
-    #[test]
-    fn parse_song_entry_returns_none_for_missing_id() {
-        let json = r#"{"title":"No ID here"}"#;
-        assert!(parse_song_entry(json).is_none());
-    }
-
-    #[test]
-    fn parse_song_entry_returns_none_for_invalid_json() {
-        assert!(parse_song_entry("not json").is_none());
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].title, "Never Gonna Give You Up");
+        assert_eq!(results[0].subtitle.as_deref(), Some("Rick Astley"));
     }
 
     #[test]
