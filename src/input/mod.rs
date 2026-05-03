@@ -72,6 +72,8 @@ pub fn poll_event(timeout: Duration, input_mode: &InputMode) -> std::io::Result<
                 KeyCode::Char('l') => Some(AppEvent::FocusLyrics),
                 KeyCode::Char('r') => Some(AppEvent::ToggleRepeat),
                 KeyCode::Char('z') => Some(AppEvent::ToggleShuffle),
+                KeyCode::Char('=') => Some(AppEvent::VolumeUp),
+                KeyCode::Char('-') => Some(AppEvent::VolumeDown),
                 KeyCode::Char('/') => Some(AppEvent::EnterSearchMode),
                 KeyCode::Char(':') => Some(AppEvent::EnterCommandMode),
                 _ => None,
