@@ -220,6 +220,8 @@ fn spawn_playlist_download(url: String, staging: PathBuf, tx: Sender<JobResult>)
                         temp_path: entry.path(),
                     });
                 }
+                // Remove the now-empty per-job staging directory
+                let _ = std::fs::remove_dir(&staging);
             }
         }
         Ok(status) => {
