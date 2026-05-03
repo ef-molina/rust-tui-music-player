@@ -873,8 +873,12 @@ fn render_youtube_results(frame: &mut Frame, area: Rect, app: &AppState) {
     state.select(Some(app.youtube_selected));
     frame.render_stateful_widget(list, area, &mut state);
 
-    // Hint line at bottom
-    let hint = Paragraph::new("Enter select · Backspace back · ↑↓ move")
+    // Hint line at bottom — context-sensitive based on selected result kind
+    let hint_text = match app.youtube_results.get(app.youtube_selected) {
+        Some(r) if r.kind == crate::youtube::SearchKind::Artist => "Enter browse albums · Backspace back · ↑↓ move",
+        _ => "Enter download · Backspace back · ↑↓ move",
+    };
+    let hint = Paragraph::new(hint_text)
         .alignment(Alignment::Center)
         .style(Style::default().fg(SUBTLE));
     let hint_area = Rect {
