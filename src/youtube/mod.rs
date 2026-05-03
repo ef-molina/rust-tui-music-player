@@ -114,13 +114,16 @@ pub fn search_albums(query: &str, page: usize) -> Result<Vec<YoutubeResult>, Str
         .map_err(|e| format!("Failed to parse yt-dlp output: {e}"))?;
 
     let skip = page * PAGE_SIZE;
+    // Collect both official releases (MPREb_*) and playlists (VL*).
+    // MPREb_ = canonical YTM album releases; VL* = playlists that are often albums.
+    // Both require a second fetch to resolve the title.
     let album_urls: Vec<String> = root["entries"]
         .as_array()
         .unwrap_or(&vec![])
         .iter()
         .filter_map(|e| {
             let id = e["id"].as_str()?;
-            if id.starts_with("MPREb_") {
+            if id.starts_with("MPREb_") || id.starts_with("VL") {
                 Some(e["url"].as_str()?.to_string())
             } else {
                 None
