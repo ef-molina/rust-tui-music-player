@@ -76,6 +76,21 @@ pub fn filtered_command_specs(query: &str) -> Vec<&'static CommandSpec> {
     matches.into_iter().map(|(_, spec)| spec).collect()
 }
 
+pub fn top_command_spec(query: &str) -> Option<&'static CommandSpec> {
+    filtered_command_specs(query).into_iter().next()
+}
+
+pub fn active_command_spec(buffer: &str) -> Option<&'static CommandSpec> {
+    let trimmed = buffer.trim_start();
+
+    command_specs().iter().find(|spec| {
+        trimmed == spec.name
+            || trimmed
+                .strip_prefix(spec.name)
+                .is_some_and(|rest| rest.starts_with(' '))
+    })
+}
+
 pub fn parse_command(input: &str) -> Command {
     let input = input.trim();
 
@@ -117,5 +132,24 @@ mod tests {
     #[test]
     fn helper_returns_empty_for_unknown_query() {
         assert!(filtered_command_specs("nonsense").is_empty());
+    }
+
+    #[test]
+    fn top_command_returns_best_match() {
+        assert_eq!(top_command_spec("d").map(|spec| spec.name), Some("download"));
+        assert_eq!(top_command_spec("normalize").map(|spec| spec.name), Some("download"));
+    }
+
+    #[test]
+    fn active_command_detects_prefilled_prefix() {
+        assert_eq!(
+            active_command_spec("download ").map(|spec| spec.name),
+            Some("download")
+        );
+        assert_eq!(
+            active_command_spec("download https://example.com").map(|spec| spec.name),
+            Some("download")
+        );
+        assert_eq!(active_command_spec("d"), None);
     }
 }

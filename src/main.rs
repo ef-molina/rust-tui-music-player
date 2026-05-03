@@ -28,7 +28,7 @@ mod player;
 mod search;
 mod ui;
 
-use crate::event::commands::{Command, parse_command};
+use crate::event::commands::{Command, active_command_spec, parse_command, top_command_spec};
 use crate::event::jobs::JobResult;
 use crate::lyrics::{LyricsState, load_for_track};
 use crate::lyrics_fetch::LyricsFetchResult;
@@ -819,7 +819,10 @@ fn run_app() -> std::io::Result<()> {
                     }
 
                     AppEvent::SubmitCommand => {
-                        if let InputMode::Command(cmd) = &app.input_mode {
+                        let mut close_command_mode = false;
+                        let mut pending_status: Option<(StatusLevel, String, Option<u64>)> = None;
+
+                        if let InputMode::Command(cmd) = &mut app.input_mode {
                             let raw = cmd.buffer.clone();
 
                             let command = parse_command(&raw);
@@ -939,18 +942,49 @@ fn run_app() -> std::io::Result<()> {
                                             }
                                         }
                                     });
+
+                                    close_command_mode = true;
                                 }
 
-                                Command::Unknown(input) => {
-                                    tracing::warn!(
-                                        input = %input,
-                                        "Unknown command"
-                                    );
+                                Command::Unknown(_) => {
+                                    if let Some(spec) = top_command_spec(&raw)
+                                        && active_command_spec(&raw).is_none()
+                                    {
+                                        cmd.buffer = format!("{} ", spec.name);
+                                        cmd.cursor = cmd.buffer.len();
+                                        pending_status = Some((
+                                            StatusLevel::Info,
+                                            format!("Command selected: {}", spec.syntax),
+                                            Some(250),
+                                        ));
+                                    } else if let Some(spec) = active_command_spec(&raw) {
+                                        pending_status = Some((
+                                            StatusLevel::Warning,
+                                            format!("{} requires more input", spec.syntax),
+                                            Some(350),
+                                        ));
+                                    } else {
+                                        tracing::warn!(
+                                            input = %raw,
+                                            "Unknown command"
+                                        );
+                                        pending_status = Some((
+                                            StatusLevel::Warning,
+                                            format!("Unknown command: {}", raw.trim()),
+                                            Some(350),
+                                        ));
+                                    }
                                 }
                             }
                         }
 
-                        app.input_mode = InputMode::Normal;
+                        if let Some((level, text, ttl)) = pending_status {
+                            app.set_status(level, text, ttl);
+                        }
+
+                        if close_command_mode {
+                            app.input_mode = InputMode::Normal;
+                        }
                     }
 
                     // Ignore all other events while in command mode

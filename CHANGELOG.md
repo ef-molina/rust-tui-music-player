@@ -34,6 +34,8 @@ This project follows [Semantic Versioning](https://semver.org/).
 - Larger compact lyrics pane for better readability in the split view
 - Height-driven compact lyrics rendering that fills the larger pane with more surrounding lyric context
 - Inline `:` command helper panel with discoverable command syntax and descriptions
+- Command-helper autofill so `Enter` accepts the top matching command before execution
+- Visual active-command state in the command bar once a helper suggestion is accepted
 - Cleaner visible track labels that hide numeric filename prefixes like `01. `
 - Slower, more readable marquee timing for long labels
 - Unicode-safe text truncation in the UI to avoid crashes on multibyte characters

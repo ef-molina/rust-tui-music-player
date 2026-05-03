@@ -21,7 +21,7 @@ use ratatui::{
 };
 
 use crate::app::{AppState, FocusPane, InputMode, LyricsStatus, SearchStatus, StatusLevel};
-use crate::event::commands::filtered_command_specs;
+use crate::event::commands::{active_command_spec, filtered_command_specs};
 use crate::player::PlaybackState;
 use unicode_width::UnicodeWidthStr;
 
@@ -337,7 +337,14 @@ fn render_command_bar(frame: &mut Frame, area: Rect, app: &AppState) {
     let cursor = if cursor_visible { '█' } else { ' ' };
 
     let (title, prefix, buffer, cursor_index) = match &app.input_mode {
-        InputMode::Command(cmd) => ("Command".to_string(), ":", cmd.buffer.as_str(), cmd.cursor),
+        InputMode::Command(cmd) => {
+            let title = if let Some(spec) = active_command_spec(&cmd.buffer) {
+                format!("Command · Active: {}", spec.name)
+            } else {
+                "Command".to_string()
+            };
+            (title, ":", cmd.buffer.as_str(), cmd.cursor)
+        }
         InputMode::Search => {
             let title = match &app.search.status {
                 SearchStatus::Idle => "Search".to_string(),
@@ -352,7 +359,11 @@ fn render_command_bar(frame: &mut Frame, area: Rect, app: &AppState) {
         InputMode::Normal => return,
     };
 
-    render_text_bar(frame, area, &title, prefix, buffer, cursor_index, cursor);
+    if matches!(app.input_mode, InputMode::Command(_)) {
+        render_command_text_bar(frame, area, &title, prefix, buffer, cursor_index, cursor);
+    } else {
+        render_text_bar(frame, area, &title, prefix, buffer, cursor_index, cursor);
+    }
 }
 
 fn render_text_bar(
@@ -381,6 +392,47 @@ fn render_text_bar(
     );
 }
 
+fn render_command_text_bar(
+    frame: &mut Frame,
+    area: Rect,
+    title: &str,
+    prefix: &str,
+    buffer: &str,
+    cursor_index: usize,
+    cursor: char,
+) {
+    let mut text = buffer.to_string();
+    let insert_at = cursor_index.min(text.len());
+    text.insert(insert_at, cursor);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(WARNING).add_modifier(Modifier::BOLD))
+        .title(title);
+
+    if let Some(spec) = active_command_spec(buffer)
+        && let Some(rest) = text.strip_prefix(spec.name)
+    {
+        frame.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::styled(prefix, Style::default().fg(WARNING).add_modifier(Modifier::BOLD)),
+                badge_span(spec.name, WARNING),
+                Span::styled(rest.to_string(), Style::default().fg(Color::White)),
+            ]))
+            .block(block),
+            area,
+        );
+        return;
+    }
+
+    frame.render_widget(
+        Paragraph::new(format!("{prefix}{text}"))
+            .style(Style::default().fg(Color::White))
+            .block(block),
+        area,
+    );
+}
+
 fn render_command_helper(frame: &mut Frame, area: Rect, app: &AppState) {
     let query = match &app.input_mode {
         InputMode::Command(cmd) => cmd.buffer.as_str(),
@@ -394,8 +446,14 @@ fn render_command_helper(frame: &mut Frame, area: Rect, app: &AppState) {
         format!("Commands ({}) for '{}'", matches.len(), query.trim())
     };
 
+    let helper_hint = if active_command_spec(query).is_some() {
+        "Enter runs active command"
+    } else {
+        "Enter accepts top match"
+    };
     let block = Block::default()
         .title(title)
+        .title_bottom(Line::from(Span::styled(helper_hint, muted_style())))
         .borders(Borders::ALL)
         .border_style(Style::default().fg(ACCENT));
 
