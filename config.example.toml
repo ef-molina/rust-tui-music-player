@@ -1,0 +1,11 @@
+# rust-tui-music-player configuration
+# Copy this file to ~/.config/rust-tui-music-player/config.toml
+# All fields are optional — defaults are shown below.
+
+# Root directory of your music library.
+# Tracks downloaded via :ss / :salb / :sa will be placed here.
+music_root = "~/Downloads/Media/Music"
+
+# Browser yt-dlp reads cookies from for YouTube authentication.
+# Supported values: brave, chrome, firefox, safari, edge, chromium, opera
+browser = "brave"
