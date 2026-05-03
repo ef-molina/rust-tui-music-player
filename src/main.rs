@@ -278,6 +278,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     debug!("logging initialized");
 
+    // Verify yt-dlp is available before entering raw mode so the error is readable
+    if std::process::Command::new("yt-dlp")
+        .arg("--version")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_err()
+    {
+        eprintln!("Error: yt-dlp is not installed or not in PATH.");
+        eprintln!("Install it with:  brew install yt-dlp");
+        eprintln!("See: https://github.com/yt-dlp/yt-dlp");
+        std::process::exit(1);
+    }
+
     terminal::enable_raw_mode().expect("Failed to enable raw mode");
     execute!(stdout(), EnterAlternateScreen).expect("Failed to enter alt screen");
 
