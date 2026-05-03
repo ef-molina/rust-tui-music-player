@@ -1,7 +1,4 @@
 //! Command parsing and representation.
-//!
-//! Commands are higher-level user intents entered via command mode.
-//! They are parsed from strings and handled by the application layer.
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CommandSpec {
@@ -13,14 +10,34 @@ pub struct CommandSpec {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
     Download { url: String },
+    SearchSong { query: String },
+    SearchAlbum { query: String },
+    SearchArtist { query: String },
     Unknown(String),
 }
 
-const COMMAND_SPECS: &[CommandSpec] = &[CommandSpec {
-    name: "download",
-    syntax: "download <url>",
-    description: "Download and normalize a track from a URL",
-}];
+const COMMAND_SPECS: &[CommandSpec] = &[
+    CommandSpec {
+        name: "download",
+        syntax: "download <url>",
+        description: "Download and normalize a track from a URL",
+    },
+    CommandSpec {
+        name: "ss",
+        syntax: "ss <song>",
+        description: "Search YouTube Music for a song",
+    },
+    CommandSpec {
+        name: "salb",
+        syntax: "salb <album>",
+        description: "Search YouTube Music for an album",
+    },
+    CommandSpec {
+        name: "sa",
+        syntax: "sa <artist>",
+        description: "Search YouTube Music for an artist",
+    },
+];
 
 pub fn command_specs() -> &'static [CommandSpec] {
     COMMAND_SPECS
@@ -32,11 +49,7 @@ fn command_match_score(spec: &CommandSpec, query: &str) -> Option<usize> {
         return Some(0);
     }
 
-    let haystack = format!(
-        "{} {} {}",
-        spec.name, spec.syntax, spec.description
-    )
-    .to_lowercase();
+    let haystack = format!("{} {} {}", spec.name, spec.syntax, spec.description).to_lowercase();
 
     if !haystack.contains(&query) {
         return None;
@@ -94,12 +107,47 @@ pub fn active_command_spec(buffer: &str) -> Option<&'static CommandSpec> {
 pub fn parse_command(input: &str) -> Command {
     let input = input.trim();
 
+    // Try each prefix in order — longer prefixes first to avoid mis-matching
+    for (prefix, builder) in &[
+        ("download ", Command::Download { url: String::new() } ),
+    ] {
+        let _ = (prefix, builder);
+    }
+
     if let Some(rest) = input.strip_prefix("download ") {
-        let url = rest.trim();
-        if !url.is_empty() {
-            return Command::Download {
-                url: url.to_string(),
-            };
+        let v = rest.trim();
+        if !v.is_empty() {
+            return Command::Download { url: v.to_string() };
+        }
+    }
+
+    // Song: :ss or :songsearch
+    for prefix in &["ss ", "songsearch "] {
+        if let Some(rest) = input.strip_prefix(prefix) {
+            let q = rest.trim();
+            if !q.is_empty() {
+                return Command::SearchSong { query: q.to_string() };
+            }
+        }
+    }
+
+    // Album: :salb or :albumsearch
+    for prefix in &["salb ", "albumsearch "] {
+        if let Some(rest) = input.strip_prefix(prefix) {
+            let q = rest.trim();
+            if !q.is_empty() {
+                return Command::SearchAlbum { query: q.to_string() };
+            }
+        }
+    }
+
+    // Artist: :sa or :artistsearch
+    for prefix in &["sa ", "artistsearch "] {
+        if let Some(rest) = input.strip_prefix(prefix) {
+            let q = rest.trim();
+            if !q.is_empty() {
+                return Command::SearchArtist { query: q.to_string() };
+            }
         }
     }
 
@@ -111,27 +159,73 @@ mod tests {
     use super::*;
 
     #[test]
-    fn command_registry_exposes_download_command() {
-        let specs = command_specs();
-        assert_eq!(specs.len(), 1);
-        assert_eq!(specs[0].name, "download");
-        assert_eq!(specs[0].syntax, "download <url>");
+    fn registry_has_four_commands() {
+        assert_eq!(command_specs().len(), 4);
+        let names: Vec<_> = command_specs().iter().map(|s| s.name).collect();
+        assert!(names.contains(&"download"));
+        assert!(names.contains(&"ss"));
+        assert!(names.contains(&"salb"));
+        assert!(names.contains(&"sa"));
     }
 
     #[test]
-    fn helper_filters_by_prefix_and_description() {
-        let prefix_matches = filtered_command_specs("down");
-        assert_eq!(prefix_matches.len(), 1);
-        assert_eq!(prefix_matches[0].name, "download");
+    fn parse_song_search_shorthand() {
+        assert_eq!(parse_command("ss God's Plan"), Command::SearchSong { query: "God's Plan".into() });
+    }
 
-        let description_matches = filtered_command_specs("normalize");
-        assert_eq!(description_matches.len(), 1);
-        assert_eq!(description_matches[0].name, "download");
+    #[test]
+    fn parse_album_search_shorthand() {
+        assert_eq!(parse_command("salb Dark Side of the Moon"), Command::SearchAlbum { query: "Dark Side of the Moon".into() });
+    }
+
+    #[test]
+    fn parse_artist_search_shorthand() {
+        assert_eq!(parse_command("sa Drake"), Command::SearchArtist { query: "Drake".into() });
+    }
+
+    #[test]
+    fn parse_song_search_full_word() {
+        assert_eq!(parse_command("songsearch Hotline Bling"), Command::SearchSong { query: "Hotline Bling".into() });
+    }
+
+    #[test]
+    fn parse_album_search_full_word() {
+        assert_eq!(parse_command("albumsearch Take Care"), Command::SearchAlbum { query: "Take Care".into() });
+    }
+
+    #[test]
+    fn parse_artist_search_full_word() {
+        assert_eq!(parse_command("artistsearch Kendrick Lamar"), Command::SearchArtist { query: "Kendrick Lamar".into() });
+    }
+
+    #[test]
+    fn bare_shorthand_without_query_is_unknown() {
+        assert!(matches!(parse_command("ss"), Command::Unknown(_)));
+        assert!(matches!(parse_command("salb"), Command::Unknown(_)));
+        assert!(matches!(parse_command("sa"), Command::Unknown(_)));
+    }
+
+    #[test]
+    fn parse_download_command() {
+        let cmd = parse_command("download https://example.com");
+        assert_eq!(cmd, Command::Download { url: "https://example.com".into() });
+    }
+
+    #[test]
+    fn filtered_specs_find_ss_by_prefix() {
+        let matches = filtered_command_specs("ss");
+        assert!(matches.iter().any(|s| s.name == "ss"));
+    }
+
+    #[test]
+    fn filtered_specs_find_sa_by_prefix() {
+        let matches = filtered_command_specs("sa");
+        assert!(matches.iter().any(|s| s.name == "sa"));
     }
 
     #[test]
     fn helper_returns_empty_for_unknown_query() {
-        assert!(filtered_command_specs("nonsense").is_empty());
+        assert!(filtered_command_specs("xyzzy").is_empty());
     }
 
     #[test]

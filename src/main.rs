@@ -27,6 +27,7 @@ mod metadata;
 mod player;
 mod search;
 mod ui;
+mod youtube;
 
 use crate::event::commands::{Command, active_command_spec, parse_command, top_command_spec};
 use crate::event::jobs::JobResult;
@@ -49,6 +50,7 @@ use std::fs::File;
 use std::io::stdout;
 use std::path::PathBuf;
 use std::process::Stdio;
+use std::sync::mpsc::Sender;
 use std::time::Duration;
 use tracing::{debug, trace, warn};
 use tracing_subscriber::EnvFilter;
@@ -79,6 +81,160 @@ fn truncate_status_url(url: &str) -> String {
         .rev()
         .collect();
     format!("{prefix}…{suffix}")
+}
+
+/// Download a URL (single track or full playlist) with progress streaming.
+/// Designed to run in a background thread; sends `JobResult` messages via `tx`.
+fn spawn_playlist_download(url: String, staging: PathBuf, tx: Sender<JobResult>) {
+    use std::io::{BufRead, BufReader};
+
+    // Use a per-job subdirectory so concurrent downloads don't clobber each other
+    // and so we can reliably collect every file that belongs to this job.
+    let job_dir = staging.join({
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        let mut h = DefaultHasher::new();
+        url.hash(&mut h);
+        format!("job_{:x}", h.finish())
+    });
+    let staging = job_dir;
+    let _ = std::fs::create_dir_all(&staging);
+    let output_template = staging.join("%(title)s [%(id)s].%(ext)s");
+
+    let _ = tx.send(JobResult::DownloadStarted { url: url.clone() });
+
+    let mut child = match std::process::Command::new("yt-dlp")
+        .args([
+            "-f", "bestaudio[ext=opus]/bestaudio",
+            "-x",
+            "--audio-format", "opus",
+            "--audio-quality", "0",
+            "--embed-metadata",
+            "--embed-thumbnail",
+            "--convert-thumbnails", "jpg",
+            "--add-metadata",
+            "--yes-playlist",
+            "--newline",
+            "--cookies-from-browser", "brave",
+            "-o",
+        ])
+        .arg(&output_template)
+        .arg(&url)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            let _ = tx.send(JobResult::DownloadFailed {
+                url,
+                error: format!("Failed to spawn yt-dlp: {e}"),
+            });
+            return;
+        }
+    };
+
+    let stdout = child.stdout.take().expect("stdout piped");
+    let reader = BufReader::new(stdout);
+
+    let mut current_item: u32 = 0;
+    let mut total_items: u32 = 0;
+    let mut current_title = String::new();
+
+    for line in reader.lines().map_while(Result::ok) {
+        let Some(rest) = line.strip_prefix("[download]") else { continue };
+        let trimmed = rest.trim();
+
+        // "[download] Downloading item X of Y"
+        if let Some(item_str) = trimmed.strip_prefix("Downloading item ") {
+            if let Some((idx, tot)) = item_str.split_once(" of ") {
+                if let (Ok(i), Ok(t)) = (idx.trim().parse::<u32>(), tot.trim().parse::<u32>()) {
+                    current_item = i;
+                    total_items = t;
+                }
+            }
+        }
+        // "[download] Destination: /full/path/Title [id].ext"
+        else if let Some(dest) = trimmed.strip_prefix("Destination: ") {
+            let filename = std::path::Path::new(dest)
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or(dest);
+            // Output template is "%(title)s [%(id)s].%(ext)s" — strip " [id].ext"
+            current_title = if let Some(pos) = filename.rfind(" [") {
+                filename[..pos].to_string()
+            } else {
+                filename.rsplit_once('.').map(|(s, _)| s).unwrap_or(filename).to_string()
+            };
+        }
+        // "[download]  42.3% of 5.23MiB at ..."
+        else if let Some(pct_str) = trimmed.split('%').next() {
+            if let Ok(track_pct) = pct_str.trim().parse::<f32>() {
+                let overall = if total_items > 0 {
+                    ((current_item.saturating_sub(1)) as f32 + track_pct / 100.0)
+                        / total_items as f32
+                        * 100.0
+                } else {
+                    track_pct
+                };
+                let _ = tx.send(JobResult::DownloadProgress {
+                    url: url.clone(),
+                    track_percent: track_pct,
+                    overall_percent: overall,
+                    track_title: current_title.clone(),
+                    track_index: current_item,
+                    total_tracks: total_items,
+                });
+            }
+        }
+    }
+
+    match child.wait() {
+        Ok(status) if status.success() => {
+            // Collect every file in the per-job staging dir and emit one
+            // DownloadFinished per track so each is individually normalized.
+            let files: Vec<_> = std::fs::read_dir(&staging)
+                .into_iter()
+                .flatten()
+                .filter_map(|e| e.ok())
+                .filter(|e| e.file_type().map(|t| t.is_file()).unwrap_or(false))
+                .collect();
+
+            if files.is_empty() {
+                let _ = tx.send(JobResult::DownloadFailed {
+                    url,
+                    error: "Download succeeded but no files found".into(),
+                });
+            } else {
+                let total = files.len();
+                for (i, entry) in files.into_iter().enumerate() {
+                    // Only the last event carries the URL so the active_download
+                    // indicator clears once all tracks are queued.
+                    let evt_url = if i + 1 == total {
+                        url.clone()
+                    } else {
+                        String::new()
+                    };
+                    let _ = tx.send(JobResult::DownloadFinished {
+                        url: evt_url,
+                        temp_path: entry.path(),
+                    });
+                }
+            }
+        }
+        Ok(status) => {
+            let _ = tx.send(JobResult::DownloadFailed {
+                url,
+                error: format!("yt-dlp exited with code {:?}", status.code()),
+            });
+        }
+        Err(e) => {
+            let _ = tx.send(JobResult::DownloadFailed {
+                url,
+                error: e.to_string(),
+            });
+        }
+    }
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -274,6 +430,57 @@ fn play_album_index(app: &mut AppState, index: usize) {
             app.lyrics = LyricsStatus::None;
         }
     }
+}
+
+/// Start a YouTube search of the given kind at the given page.
+/// Resets results when page == 0; appends when page > 0 (load-more).
+fn spawn_youtube_search(
+    app: &mut AppState,
+    query: String,
+    kind: crate::youtube::SearchKind,
+    page: usize,
+) {
+    use crate::youtube::PAGE_SIZE;
+
+    if page == 0 {
+        app.youtube_results.clear();
+        app.youtube_selected = 0;
+    }
+    app.youtube_searching = true;
+    app.youtube_search_kind = kind;
+    app.youtube_page = page;
+    app.youtube_query = query.clone();
+    app.youtube_has_more = false;
+    app.focus = FocusPane::YoutubeResults;
+
+    let label = match kind {
+        crate::youtube::SearchKind::Song => "songs",
+        crate::youtube::SearchKind::Album => "albums",
+        crate::youtube::SearchKind::Artist => "artists",
+    };
+    app.set_status(
+        StatusLevel::Info,
+        format!("Searching {label} for \"{query}\"…"),
+        None,
+    );
+
+    let tx = app.jobs_tx.clone();
+    std::thread::spawn(move || {
+        let result = match kind {
+            crate::youtube::SearchKind::Song => crate::youtube::search_songs(&query, page),
+            crate::youtube::SearchKind::Album => crate::youtube::search_albums(&query, page),
+            crate::youtube::SearchKind::Artist => crate::youtube::search_artists(&query, page),
+        };
+        match result {
+            Ok(results) => {
+                let has_more = results.len() >= PAGE_SIZE;
+                let _ = tx.send(JobResult::YoutubeSearchDone { results, has_more });
+            }
+            Err(e) => {
+                let _ = tx.send(JobResult::YoutubeSearchFailed(e));
+            }
+        }
+    });
 }
 
 fn play_next_or_stop(app: &mut AppState) {
@@ -652,6 +859,10 @@ fn handle_tick(app: &mut AppState) {
             }
             JobResult::DownloadFinished { url, temp_path } => {
                 app.active_download_url = None;
+                // Only clear the progress bar on the final track (url is empty for intermediate ones)
+                if !url.is_empty() {
+                    app.active_download = None;
+                }
                 tracing::info!(
                     url = %url,
                     path = %temp_path.display(),
@@ -683,6 +894,32 @@ fn handle_tick(app: &mut AppState) {
                             normalized.final_path.clone(),
                             app.search_tx.clone(),
                         );
+
+                        // Refresh browser if the new track landed in or under the current dir
+                        let track_album_dir = normalized.final_path.parent();
+                        let track_artist_dir = track_album_dir.and_then(|d| d.parent());
+
+                        let browser_stale = track_artist_dir
+                            .map(|d| d == app.current_dir)
+                            .unwrap_or(false);
+
+                        if browser_stale {
+                            app.browser_entries = fs::read_dir(&app.current_dir).unwrap_or_default();
+                        }
+
+                        // Refresh album pane if this track landed in the active album dir
+                        let album_stale = track_album_dir
+                            .zip(app.active_album_dir.as_deref())
+                            .map(|(track_dir, album_dir)| track_dir == album_dir)
+                            .unwrap_or(false);
+
+                        if album_stale {
+                            if let Ok(Some(tracks)) = fs::detect_album(
+                                app.active_album_dir.as_deref().unwrap()
+                            ) {
+                                app.album_entries = tracks;
+                            }
+                        }
                     }
                     Err(err) => {
                         app.set_status(
@@ -698,8 +935,26 @@ fn handle_tick(app: &mut AppState) {
                     }
                 }
             }
+            JobResult::DownloadProgress {
+                url,
+                overall_percent,
+                track_title,
+                track_index,
+                total_tracks,
+                ..
+            } => {
+                app.active_download = Some(crate::app::DownloadState {
+                    track_title,
+                    track_index,
+                    total_tracks,
+                    overall_percent,
+                });
+                // Keep the URL visible in the status bar label
+                app.active_download_url = Some(url);
+            }
             JobResult::DownloadFailed { url, error } => {
                 app.active_download_url = None;
+                app.active_download = None;
                 app.set_status(
                     StatusLevel::Error,
                     format!("Download failed: {} ({error})", truncate_status_url(&url)),
@@ -710,6 +965,39 @@ fn handle_tick(app: &mut AppState) {
                     error = %error,
                     "Download job failed"
                 );
+            }
+            JobResult::YoutubeSearchDone { results, has_more } => {
+                app.youtube_searching = false;
+                let appending = app.youtube_page > 0 && !app.youtube_results.is_empty();
+                let new_count = results.len();
+                if appending {
+                    app.youtube_results.extend(results);
+                } else {
+                    app.youtube_results = results;
+                    app.youtube_selected = 0;
+                }
+                app.youtube_has_more = has_more;
+                app.focus = FocusPane::YoutubeResults;
+                let total = app.youtube_results.len();
+                app.set_status(
+                    StatusLevel::Success,
+                    if appending {
+                        format!("Loaded {new_count} more — {total} total")
+                    } else {
+                        format!("Found {total} result(s) — Enter to select, Tab for more")
+                    },
+                    Some(300),
+                );
+                tracing::info!(total, "YouTube search completed");
+            }
+            JobResult::YoutubeSearchFailed(error) => {
+                app.youtube_searching = false;
+                app.set_status(
+                    StatusLevel::Error,
+                    format!("YouTube search failed: {error}"),
+                    Some(600),
+                );
+                tracing::error!(error = %error, "YouTube search failed");
             }
         }
     }
@@ -835,115 +1123,27 @@ fn run_app() -> std::io::Result<()> {
 
                             match command {
                                 Command::Download { url } => {
-                                    tracing::info!(
-                                        url = %url,
-                                        "Spawning download job"
-                                    );
-
+                                    tracing::info!(url = %url, "Spawning download job");
+                                    app.active_download_url = Some(url.clone());
                                     let tx = app.jobs_tx.clone();
-
+                                    let staging = download_staging_dir();
                                     std::thread::spawn(move || {
-                                        tracing::debug!(
-                                            url = %url,
-                                            "Download thread started"
-                                        );
-
-                                        let staging = download_staging_dir();
-                                        let _ = std::fs::create_dir_all(&staging);
-
-                                        let output_template =
-                                            staging.join("%(title)s [%(id)s].%(ext)s");
-
-                                        let status = std::process::Command::new("yt-dlp")
-                                            .arg("-f")
-                                            .arg("bestaudio[ext=opus]/bestaudio")
-                                            .arg("-x")
-                                            .arg("--audio-format")
-                                            .arg("opus")
-                                            .arg("--audio-quality")
-                                            .arg("0")
-                                            .arg("--embed-metadata")
-                                            .arg("--embed-thumbnail")
-                                            .arg("--convert-thumbnails")
-                                            .arg("jpg")
-                                            .arg("--add-metadata")
-                                            .arg("-o")
-                                            .arg(output_template)
-                                            .arg(&url)
-                                            .stdout(Stdio::null())
-                                            .stderr(Stdio::null())
-                                            .status();
-
-                                        match status {
-                                            Ok(s) if s.success() => {
-                                                tracing::debug!(
-                                                    url = %url,
-                                                    "yt-dlp exited successfully"
-                                                );
-
-                                                if let Ok(entries) = std::fs::read_dir(&staging)
-                                                    && let Some(latest) = entries
-                                                        .filter_map(|e| e.ok())
-                                                        .max_by_key(|e| {
-                                                            e.metadata()
-                                                                .and_then(|m| m.modified())
-                                                                .ok()
-                                                        })
-                                                {
-                                                    tracing::info!(
-                                                        url = %url,
-                                                        path = %latest.path().display(),
-                                                        "Download finished"
-                                                    );
-
-                                                    let _ = tx.send(JobResult::DownloadFinished {
-                                                        url,
-                                                        temp_path: latest.path(),
-                                                    });
-                                                    return;
-                                                }
-
-                                                tracing::error!(
-                                                    url = %url,
-                                                    "Download succeeded but no file found"
-                                                );
-
-                                                let _ = tx.send(JobResult::DownloadFailed {
-                                                    url,
-                                                    error: "Download succeeded but no file found"
-                                                        .into(),
-                                                });
-                                            }
-
-                                            Ok(s) => {
-                                                tracing::error!(
-                                                    url = %url,
-                                                    status = ?s.code(),
-                                                    "yt-dlp exited with failure"
-                                                );
-
-                                                let _ = tx.send(JobResult::DownloadFailed {
-                                                    url,
-                                                    error: "yt-dlp failed".into(),
-                                                });
-                                            }
-
-                                            Err(e) => {
-                                                tracing::error!(
-                                                    url = %url,
-                                                    error = %e,
-                                                    "Failed to spawn yt-dlp"
-                                                );
-
-                                                let _ = tx.send(JobResult::DownloadFailed {
-                                                    url,
-                                                    error: e.to_string(),
-                                                });
-                                            }
-                                        }
+                                        spawn_playlist_download(url, staging, tx);
                                     });
 
                                     close_command_mode = true;
+                                }
+
+                                Command::SearchSong { query } => {
+                                    spawn_youtube_search(&mut app, query, crate::youtube::SearchKind::Song, 0);
+                                }
+
+                                Command::SearchAlbum { query } => {
+                                    spawn_youtube_search(&mut app, query, crate::youtube::SearchKind::Album, 0);
+                                }
+
+                                Command::SearchArtist { query } => {
+                                    spawn_youtube_search(&mut app, query, crate::youtube::SearchKind::Artist, 0);
                                 }
 
                                 Command::Unknown(_) => {
@@ -964,10 +1164,7 @@ fn run_app() -> std::io::Result<()> {
                                             Some(350),
                                         ));
                                     } else {
-                                        tracing::warn!(
-                                            input = %raw,
-                                            "Unknown command"
-                                        );
+                                        tracing::warn!(input = %raw, "Unknown command");
                                         pending_status = Some((
                                             StatusLevel::Warning,
                                             format!("Unknown command: {}", raw.trim()),
@@ -1145,6 +1342,11 @@ fn run_app() -> std::io::Result<()> {
                         FocusPane::Lyrics => {
                             app.lyric_scroll = app.lyric_scroll.saturating_sub(1);
                         }
+                        FocusPane::YoutubeResults => {
+                            if app.youtube_selected > 0 {
+                                app.youtube_selected -= 1;
+                            }
+                        }
                     },
 
                     AppEvent::MoveDown => match app.focus {
@@ -1168,11 +1370,23 @@ fn run_app() -> std::io::Result<()> {
                                 app.lyric_scroll += 1;
                             }
                         }
+                        FocusPane::YoutubeResults => {
+                            let max = if app.youtube_has_more {
+                                app.youtube_results.len() // can reach the "Load more" row
+                            } else {
+                                app.youtube_results.len().saturating_sub(1)
+                            };
+                            if app.youtube_selected < max {
+                                app.youtube_selected += 1;
+                            }
+                        }
                     },
 
                     // -----------------------------------------------------------------
                     AppEvent::NavigateBack => {
-                        if !pop_navigation_history(&mut app) {
+                        if app.focus == FocusPane::YoutubeResults {
+                            app.focus = FocusPane::Browser;
+                        } else if !pop_navigation_history(&mut app) {
                             app.set_status(StatusLevel::Info, "No previous view", Some(250));
                         }
                     }
@@ -1267,6 +1481,28 @@ fn run_app() -> std::io::Result<()> {
                             play_album_index(&mut app, index);
                         }
                         FocusPane::Lyrics => {}
+                        FocusPane::YoutubeResults => {
+                            // The virtual "Load more" row sits after all real results
+                            let load_more_idx = app.youtube_results.len();
+                            if app.youtube_selected == load_more_idx && app.youtube_has_more {
+                                let query = app.youtube_query.clone();
+                                let kind = app.youtube_search_kind;
+                                let next_page = app.youtube_page + 1;
+                                spawn_youtube_search(&mut app, query, kind, next_page);
+                            } else if let Some(result) = app.youtube_results.get(app.youtube_selected) {
+                                let url = result.url.clone();
+                                let title = result.title.clone();
+                                tracing::info!(url = %url, "Queuing download from YouTube results");
+                                app.active_download_url = Some(url.clone());
+                                app.set_status(StatusLevel::Info, format!("Downloading: {title}"), None);
+                                let tx = app.jobs_tx.clone();
+                                let staging = download_staging_dir();
+                                std::thread::spawn(move || {
+                                    spawn_playlist_download(url, staging, tx);
+                                });
+                                app.focus = FocusPane::Browser;
+                            }
+                        }
                     },
 
                     AppEvent::TogglePause => app.player.toggle_pause(),

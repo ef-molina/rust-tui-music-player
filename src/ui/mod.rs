@@ -268,6 +268,7 @@ fn focus_label(app: &AppState) -> &'static str {
         FocusPane::Browser => "Browser",
         FocusPane::Album => "Tracks",
         FocusPane::Lyrics => "Lyrics",
+        FocusPane::YoutubeResults => "YouTube",
     }
 }
 
@@ -758,6 +759,134 @@ fn render_album(frame: &mut Frame, area: Rect, app: &AppState) {
 }
 
 // -----------------------------------------------------------------------------
+// YouTube results pane
+// -----------------------------------------------------------------------------
+fn kind_badge(kind: crate::youtube::SearchKind) -> Span<'static> {
+    match kind {
+        crate::youtube::SearchKind::Song   => Span::styled(" ♪ ", Style::default().fg(Color::Black).bg(Color::Rgb(102,187,160)).add_modifier(Modifier::BOLD)),
+        crate::youtube::SearchKind::Album  => Span::styled(" ▣ ", Style::default().fg(Color::Black).bg(Color::Rgb(130,150,200)).add_modifier(Modifier::BOLD)),
+        crate::youtube::SearchKind::Artist => Span::styled(" ◉ ", Style::default().fg(Color::Black).bg(Color::Rgb(200,150,100)).add_modifier(Modifier::BOLD)),
+    }
+}
+
+fn render_youtube_results(frame: &mut Frame, area: Rect, app: &AppState) {
+    let kind_label = match app.youtube_search_kind {
+        crate::youtube::SearchKind::Song   => "Songs",
+        crate::youtube::SearchKind::Album  => "Albums",
+        crate::youtube::SearchKind::Artist => "Artists",
+    };
+    let title = if app.youtube_searching {
+        format!(" {kind_label} — Searching… ")
+    } else {
+        format!(" {kind_label} — {} result(s) ", app.youtube_results.len())
+    };
+
+    let block = Block::default()
+        .title(title)
+        .borders(Borders::ALL)
+        .border_style(pane_border_style(true));
+
+    if app.youtube_searching && app.youtube_results.is_empty() {
+        frame.render_widget(
+            Paragraph::new("Searching…")
+                .alignment(Alignment::Center)
+                .style(Style::default().fg(MUTED))
+                .block(block),
+            area,
+        );
+        return;
+    }
+
+    if app.youtube_results.is_empty() {
+        frame.render_widget(
+            Paragraph::new("No results — try  :ss <song>  :salb <album>  :sa <artist>")
+                .alignment(Alignment::Center)
+                .style(Style::default().fg(MUTED))
+                .block(block),
+            area,
+        );
+        return;
+    }
+
+    let inner_width = area.width.saturating_sub(6) as usize;
+
+    let mut items: Vec<ListItem> = app
+        .youtube_results
+        .iter()
+        .enumerate()
+        .map(|(i, result)| {
+            let is_selected = i == app.youtube_selected;
+
+            let title_str = truncate_middle(&result.title, inner_width.saturating_sub(16));
+            let count_tag = result.track_count.map(|n| format!("  {n} tracks")).unwrap_or_default();
+
+            let title_style = if is_selected {
+                Style::default().fg(HIGHLIGHT_FG).add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(ACCENT)
+            };
+
+            let top = Line::from(vec![
+                kind_badge(result.kind),
+                Span::raw(" "),
+                Span::styled(title_str, title_style),
+                Span::styled(count_tag, Style::default().fg(MUTED)),
+            ]);
+
+            let subtitle = result.subtitle.as_deref().unwrap_or("").to_string();
+            let sub = Line::from(vec![
+                Span::raw("     "),
+                Span::styled(
+                    truncate_middle(&subtitle, inner_width.saturating_sub(6)),
+                    Style::default().fg(SUBTLE),
+                ),
+            ]);
+
+            ListItem::new(vec![top, sub])
+        })
+        .collect();
+
+    // Virtual "Load more" row at the end when more pages exist
+    if app.youtube_has_more {
+        let is_selected = app.youtube_selected == app.youtube_results.len();
+        items.push(ListItem::new(Line::from(Span::styled(
+            "  ↓  Load more…",
+            if is_selected {
+                Style::default().fg(HIGHLIGHT_FG).add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(MUTED)
+            },
+        ))));
+    }
+
+    let list = List::new(items)
+        .block(block)
+        .highlight_style(
+            Style::default()
+                .bg(HIGHLIGHT_BG)
+                .fg(HIGHLIGHT_FG)
+                .add_modifier(Modifier::BOLD),
+        )
+        .highlight_symbol("▶ ");
+
+    let mut state = ListState::default();
+    state.select(Some(app.youtube_selected));
+    frame.render_stateful_widget(list, area, &mut state);
+
+    // Hint line at bottom
+    let hint = Paragraph::new("Enter select · Backspace back · ↑↓ move")
+        .alignment(Alignment::Center)
+        .style(Style::default().fg(SUBTLE));
+    let hint_area = Rect {
+        y: area.y + area.height.saturating_sub(2),
+        height: 1,
+        x: area.x + 1,
+        width: area.width.saturating_sub(2),
+    };
+    frame.render_widget(hint, hint_area);
+}
+
+// -----------------------------------------------------------------------------
 // Mini lyric renderer
 // -----------------------------------------------------------------------------
 fn render_lyrics_mini(frame: &mut Frame, area: Rect, app: &AppState) {
@@ -963,27 +1092,61 @@ fn render_statusline(frame: &mut Frame, area: Rect, app: &AppState) {
         .constraints([Constraint::Min(10), Constraint::Length(34)])
         .split(inner);
 
-    frame.render_widget(
-        Paragraph::new(Line::from(vec![
-            badge_span(
-                match level {
-                    StatusLevel::Info => "Info",
-                    StatusLevel::Success => "Ready",
-                    StatusLevel::Warning => "Warn",
-                    StatusLevel::Error => "Error",
-                },
-                color,
-            ),
-            Span::raw(" "),
-            Span::styled(truncate_middle(&message, chunks[0].width.saturating_sub(10) as usize), muted_style()),
-        ])),
-        chunks[0],
-    );
+    if let Some(dl) = &app.active_download {
+        // Replace the status bar with a download progress bar
+        let available = inner.width.saturating_sub(2) as usize;
+        let label = format!("⬇  {} ({}/{})", dl.track_title, dl.track_index, dl.total_tracks);
+        let pct_label = format!("  {:.0}%", dl.overall_percent);
+        let label_width = UnicodeWidthStr::width(label.as_str());
+        let pct_width = UnicodeWidthStr::width(pct_label.as_str());
+        let bar_width = available
+            .saturating_sub(label_width)
+            .saturating_sub(pct_width)
+            .saturating_sub(2);
+        let filled = ((dl.overall_percent / 100.0) * bar_width as f32).round() as usize;
 
-    frame.render_widget(
-        Paragraph::new(Span::styled(right_text, muted_style())).alignment(Alignment::Right),
-        chunks[1],
-    );
+        frame.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::styled(
+                    truncate_middle(&label, available / 2),
+                    Style::default().fg(Color::White),
+                ),
+                Span::raw("  "),
+                Span::styled("█".repeat(filled), Style::default().fg(ACCENT)),
+                Span::styled(
+                    "─".repeat(bar_width.saturating_sub(filled)),
+                    Style::default().fg(SUBTLE),
+                ),
+                Span::styled(pct_label, Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)),
+            ])),
+            inner,
+        );
+    } else {
+        frame.render_widget(
+            Paragraph::new(Line::from(vec![
+                badge_span(
+                    match level {
+                        StatusLevel::Info => "Info",
+                        StatusLevel::Success => "Ready",
+                        StatusLevel::Warning => "Warn",
+                        StatusLevel::Error => "Error",
+                    },
+                    color,
+                ),
+                Span::raw(" "),
+                Span::styled(
+                    truncate_middle(&message, chunks[0].width.saturating_sub(10) as usize),
+                    muted_style(),
+                ),
+            ])),
+            chunks[0],
+        );
+
+        frame.render_widget(
+            Paragraph::new(Span::styled(right_text, muted_style())).alignment(Alignment::Right),
+            chunks[1],
+        );
+    }
 }
 
 // -----------------------------------------------------------------------------
@@ -1101,7 +1264,7 @@ pub fn draw(frame: &mut Frame, app: &AppState) {
 
     // Right pane layout depends on focus
     let right_chunks = match app.focus {
-        FocusPane::Lyrics => Layout::default()
+        FocusPane::Lyrics | FocusPane::YoutubeResults => Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Min(1)])
             .split(main_body_area),
@@ -1118,6 +1281,9 @@ pub fn draw(frame: &mut Frame, app: &AppState) {
     match app.focus {
         FocusPane::Lyrics => {
             render_lyrics_full(frame, right_chunks[0], app);
+        }
+        FocusPane::YoutubeResults => {
+            render_youtube_results(frame, right_chunks[0], app);
         }
         _ => {
             render_album(frame, right_chunks[0], app);
@@ -1156,7 +1322,7 @@ pub fn draw(frame: &mut Frame, app: &AppState) {
             Constraint::Length(1), // track title
             Constraint::Length(1), // artist + album
             Constraint::Length(1), // controls
-            Constraint::Min(1),    // progress bar
+            Constraint::Min(1),    // playback bar
         ])
         .split(footer_inner);
 
@@ -1232,6 +1398,7 @@ pub fn draw(frame: &mut Frame, app: &AppState) {
         footer_rows[2],
     );
 
+    // Playback progress bar (row 3)
     let pos = app.player.metrics.position;
     let dur = app.player.metrics.duration;
 

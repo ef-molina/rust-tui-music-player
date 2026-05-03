@@ -100,7 +100,12 @@ pub fn normalize_downloaded_track(
     let _ = library_root;
 
     // unimplemented!("classification complete: kind={kind:?}, track={track_number:?}, year={year:?}");
-    let (artist, mut featured_artists) = normalize_artist(&meta.artist, &meta.title);
+    let comment_text = meta.comment.as_deref().or(meta.synopsis.as_deref());
+    let (artist, mut featured_artists) = normalize_artist(
+        comment_text,
+        &meta.artist,
+        &meta.title,
+    );
     let (title, title_features) = normalize_title_and_features(&meta.title);
     featured_artists.extend(title_features);
 
@@ -192,9 +197,25 @@ fn contains_any(haystack: &str, needles: &[&str]) -> bool {
     needles.iter().any(|n| haystack.contains(n))
 }
 
-fn normalize_artist(raw: &str, title: &str) -> (String, Vec<String>) {
-    let raw = raw.trim();
+fn normalize_artist(comment: Option<&str>, raw: &str, title: &str) -> (String, Vec<String>) {
+    // Priority 1: YouTube Music comment format — most reliable source.
+    // The comment's first line is "Track Title · Artist1 · Artist2 · ..."
+    // Artist1 is always the primary artist, regardless of what the artist tag says.
+    if let Some(primary) = primary_artist_from_comment(comment) {
+        return (primary, Vec::new());
+    }
 
+    // Priority 2: First comma-separated value from the artist tag.
+    // Handles "Dr. Dre, Hittman, Snoop Dogg" → "Dr. Dre".
+    // The convention in music metadata is that the primary artist is listed first.
+    let raw = raw.trim();
+    if let Some(primary) = raw.split(',').next().map(str::trim).filter(|s| !s.is_empty()) {
+        if !primary.ends_with("Music") {
+            return (primary.to_string(), Vec::new());
+        }
+    }
+
+    // Priority 3: Generic YouTube channel placeholder — derive from title instead.
     if raw.ends_with("Music")
         && let Some(artist) = extract_artist_from_title(title)
     {
@@ -202,6 +223,22 @@ fn normalize_artist(raw: &str, title: &str) -> (String, Vec<String>) {
     }
 
     (raw.to_string(), Vec::new())
+}
+
+/// Extract the primary artist from a YouTube Music comment/synopsis.
+/// Format: "Track Title · Artist1 · Artist2 · ..."
+fn primary_artist_from_comment(comment: Option<&str>) -> Option<String> {
+    let first_line = comment?.lines().next()?.trim();
+    if !first_line.contains(" · ") {
+        return None;
+    }
+    let mut parts = first_line.split(" · ");
+    parts.next(); // skip track title
+    let primary = parts.next()?.trim();
+    if primary.is_empty() {
+        return None;
+    }
+    Some(primary.to_string())
 }
 
 fn extract_artist_from_title(title: &str) -> Option<String> {
@@ -415,6 +452,34 @@ mod tests {
     }
 
     #[test]
+    fn comment_dot_format_extracts_primary_artist() {
+        // YouTube Music comment: "Track · Dr. Dre · Hittman · Snoop Dogg\n..."
+        let comment = "Bitch Niggaz · Dr. Dre · Hittman · Six-Two · Snoop Dogg\n\n2001";
+        let (artist, _) = normalize_artist(
+            Some(comment),
+            "Dr. Dre, Hittman, Six-Two, Snoop Dogg",
+            "Bitch Niggaz",
+        );
+        assert_eq!(artist, "Dr. Dre");
+    }
+
+    #[test]
+    fn falls_back_to_first_comma_split_when_no_comment() {
+        let (artist, _) = normalize_artist(
+            None,
+            "Jay Electronica, The-Dream",
+            "Shiny Suit Theory",
+        );
+        assert_eq!(artist, "Jay Electronica");
+    }
+
+    #[test]
+    fn single_artist_unchanged() {
+        let (artist, _) = normalize_artist(None, "Kendrick Lamar", "N95");
+        assert_eq!(artist, "Kendrick Lamar");
+    }
+
+    #[test]
     fn classify_auto_generated_album() {
         let dir = tempdir().unwrap();
         let track = dummy_track(dir.path(), "EdEddnEddy [2BYqLgxoZRI].opus");
@@ -424,7 +489,7 @@ mod tests {
         //
         // Later we’ll add metadata injection helpers if needed.
 
-        let meta = crate::metadata::model::TrackMetadata {
+        let meta = crate::metadata::model::TrackMetadata { album_artist: None,
             title: "EdEddnEddy".into(),
             artist: "JID".into(),
             album: Some("The Never Story".into()),
@@ -445,7 +510,7 @@ mod tests {
 
     #[test]
     fn classify_official_audio_single() {
-        let meta = crate::metadata::model::TrackMetadata {
+        let meta = crate::metadata::model::TrackMetadata { album_artist: None,
             title: "Some Song (Official Audio)".into(),
             artist: "Artist".into(),
             album: None,
@@ -464,7 +529,7 @@ mod tests {
 
     #[test]
     fn classify_creator_upload_fallback() {
-        let meta = crate::metadata::model::TrackMetadata {
+        let meta = crate::metadata::model::TrackMetadata { album_artist: None,
             title: "random upload".into(),
             artist: "someone".into(),
             album: None,
@@ -585,7 +650,7 @@ mod tests {
         fs::write(&src_file, b"test audio").unwrap();
 
         // Minimal metadata stub
-        let meta = crate::metadata::model::TrackMetadata {
+        let meta = crate::metadata::model::TrackMetadata { album_artist: None,
             title: "Fuel (feat. JID)".into(),
             artist: "Eminem".into(),
             album: None,

@@ -58,7 +58,7 @@ mod tests {
     use tempfile::tempdir;
 
     fn complete_metadata() -> TrackMetadata {
-        TrackMetadata {
+        TrackMetadata { album_artist: None,
             title: "Song".into(),
             artist: "Artist".into(),
             album: Some("Album".into()),
@@ -73,7 +73,7 @@ mod tests {
     }
 
     fn incomplete_metadata() -> TrackMetadata {
-        TrackMetadata {
+        TrackMetadata { album_artist: None,
             title: "".into(),
             artist: "".into(),
             album: None,
