@@ -1511,15 +1511,23 @@ fn run_app() -> std::io::Result<()> {
                             } else if let Some(result) = app.youtube_results.get(app.youtube_selected) {
                                 let url = result.url.clone();
                                 let title = result.title.clone();
-                                tracing::info!(url = %url, "Queuing download from YouTube results");
-                                app.active_download_url = Some(url.clone());
-                                app.set_status(StatusLevel::Info, format!("Downloading: {title}"), None);
-                                let tx = app.jobs_tx.clone();
-                                let staging = download_staging_dir();
-                                std::thread::spawn(move || {
-                                    spawn_playlist_download(url, staging, tx);
-                                });
-                                app.focus = FocusPane::Browser;
+                                let kind = result.kind;
+
+                                if kind == crate::youtube::SearchKind::Artist {
+                                    // Drill into this artist's albums rather than downloading their channel
+                                    tracing::info!(artist = %title, "Browsing artist albums");
+                                    spawn_youtube_search(&mut app, title, crate::youtube::SearchKind::Album, 0);
+                                } else {
+                                    tracing::info!(url = %url, "Queuing download from YouTube results");
+                                    app.active_download_url = Some(url.clone());
+                                    app.set_status(StatusLevel::Info, format!("Downloading: {title}"), None);
+                                    let tx = app.jobs_tx.clone();
+                                    let staging = download_staging_dir();
+                                    std::thread::spawn(move || {
+                                        spawn_playlist_download(url, staging, tx);
+                                    });
+                                    app.focus = FocusPane::Browser;
+                                }
                             }
                         }
                     },
