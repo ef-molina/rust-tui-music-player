@@ -18,6 +18,7 @@
 //! - trigger UI redraws
 
 mod app;
+mod config;
 mod event;
 mod fs;
 mod input;
@@ -85,7 +86,7 @@ fn truncate_status_url(url: &str) -> String {
 
 /// Download a URL (single track or full playlist) with progress streaming.
 /// Designed to run in a background thread; sends `JobResult` messages via `tx`.
-fn spawn_playlist_download(url: String, staging: PathBuf, tx: Sender<JobResult>) {
+fn spawn_playlist_download(url: String, staging: PathBuf, browser: String, tx: Sender<JobResult>) {
     use std::io::{BufRead, BufReader};
 
     // Use a per-job subdirectory so concurrent downloads don't clobber each other
@@ -115,7 +116,7 @@ fn spawn_playlist_download(url: String, staging: PathBuf, tx: Sender<JobResult>)
             "--add-metadata",
             "--yes-playlist",
             "--newline",
-            "--cookies-from-browser", "brave",
+            "--cookies-from-browser", &browser,
             "-o",
         ])
         .arg(&output_template)
@@ -481,11 +482,12 @@ fn spawn_youtube_search(
     );
 
     let tx = app.jobs_tx.clone();
+    let browser = app.browser.clone();
     std::thread::spawn(move || {
         let result = match kind {
-            crate::youtube::SearchKind::Song => crate::youtube::search_songs(&query, page),
-            crate::youtube::SearchKind::Album => crate::youtube::search_albums(&query, page),
-            crate::youtube::SearchKind::Artist => crate::youtube::search_artists(&query, page),
+            crate::youtube::SearchKind::Song => crate::youtube::search_songs(&query, page, &browser),
+            crate::youtube::SearchKind::Album => crate::youtube::search_albums(&query, page, &browser),
+            crate::youtube::SearchKind::Artist => crate::youtube::search_artists(&query, page, &browser),
         };
         match result {
             Ok(results) => {
@@ -1093,10 +1095,11 @@ fn handle_tick(app: &mut AppState) {
 /// Main application loop
 /// --------------------------------------------------
 fn run_app() -> std::io::Result<()> {
+    let cfg = config::load();
     let (lyrics_tx, lyrics_rx) = std::sync::mpsc::channel();
     let (search_tx, search_rx) = std::sync::mpsc::channel();
     let (jobs_tx, jobs_rx) = std::sync::mpsc::channel();
-    let mut app = AppState::new(lyrics_rx, lyrics_tx, search_rx, search_tx.clone(), jobs_rx, jobs_tx);
+    let mut app = AppState::new(&cfg, lyrics_rx, lyrics_tx, search_rx, search_tx.clone(), jobs_rx, jobs_tx);
     let backend = CrosstermBackend::new(stdout());
     let mut terminal = Terminal::new(backend)?;
 
@@ -1192,8 +1195,9 @@ fn run_app() -> std::io::Result<()> {
                                     app.active_download_url = Some(url.clone());
                                     let tx = app.jobs_tx.clone();
                                     let staging = download_staging_dir();
+                                    let browser = app.browser.clone();
                                     std::thread::spawn(move || {
-                                        spawn_playlist_download(url, staging, tx);
+                                        spawn_playlist_download(url, staging, browser, tx);
                                     });
 
                                     close_command_mode = true;
@@ -1572,8 +1576,9 @@ fn run_app() -> std::io::Result<()> {
                                     app.set_status(StatusLevel::Info, format!("Downloading: {title}"), None);
                                     let tx = app.jobs_tx.clone();
                                     let staging = download_staging_dir();
+                                    let browser = app.browser.clone();
                                     std::thread::spawn(move || {
-                                        spawn_playlist_download(url, staging, tx);
+                                        spawn_playlist_download(url, staging, browser, tx);
                                     });
                                     app.focus = FocusPane::Browser;
                                 }
@@ -1660,7 +1665,7 @@ mod tests {
         let (lyrics_tx, lyrics_rx) = channel();
         let (search_tx, search_rx) = channel();
         let (jobs_tx, jobs_rx) = channel();
-        AppState::new(lyrics_rx, lyrics_tx, search_rx, search_tx, jobs_rx, jobs_tx)
+        AppState::new(&crate::config::Config::default(), lyrics_rx, lyrics_tx, search_rx, search_tx, jobs_rx, jobs_tx)
     }
 
     #[test]

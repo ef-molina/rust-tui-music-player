@@ -31,7 +31,7 @@ pub struct YoutubeResult {
 /// Uses the YouTube Music search page and filters to watch URLs only,
 /// which avoids the mixed results (reaction videos, compilations) from ytsearch:.
 /// `page` is 0-based; fetches PAGE_SIZE results per page.
-pub fn search_songs(query: &str, page: usize) -> Result<Vec<YoutubeResult>, String> {
+pub fn search_songs(query: &str, page: usize, browser: &str) -> Result<Vec<YoutubeResult>, String> {
     let search_url = format!(
         "https://music.youtube.com/search?q={}",
         urlencoding::encode(query)
@@ -44,7 +44,7 @@ pub fn search_songs(query: &str, page: usize) -> Result<Vec<YoutubeResult>, Stri
             "--no-warnings",
             "--quiet",
             "--cookies-from-browser",
-            "brave",
+            browser,
         ])
         .arg(&search_url)
         .output()
@@ -91,7 +91,7 @@ pub fn search_songs(query: &str, page: usize) -> Result<Vec<YoutubeResult>, Stri
 /// Search YouTube Music for official album releases matching `query`.
 /// Uses MPREb_* IDs which are canonical YTM album release identifiers.
 /// `page` is 0-based; fetches PAGE_SIZE albums per page.
-pub fn search_albums(query: &str, page: usize) -> Result<Vec<YoutubeResult>, String> {
+pub fn search_albums(query: &str, page: usize, browser: &str) -> Result<Vec<YoutubeResult>, String> {
     let search_url = format!(
         "https://music.youtube.com/search?q={}",
         urlencoding::encode(query)
@@ -104,7 +104,7 @@ pub fn search_albums(query: &str, page: usize) -> Result<Vec<YoutubeResult>, Str
             "--no-warnings",
             "--quiet",
             "--cookies-from-browser",
-            "brave",
+            browser,
         ])
         .arg(&search_url)
         .output()
@@ -114,9 +114,6 @@ pub fn search_albums(query: &str, page: usize) -> Result<Vec<YoutubeResult>, Str
         .map_err(|e| format!("Failed to parse yt-dlp output: {e}"))?;
 
     let skip = page * PAGE_SIZE;
-    // Collect both official releases (MPREb_*) and playlists (VL*).
-    // MPREb_ = canonical YTM album releases; VL* = playlists that are often albums.
-    // Both require a second fetch to resolve the title.
     let album_urls: Vec<String> = root["entries"]
         .as_array()
         .unwrap_or(&vec![])
@@ -137,9 +134,13 @@ pub fn search_albums(query: &str, page: usize) -> Result<Vec<YoutubeResult>, Str
         return Ok(Vec::new());
     }
 
+    let browser = browser.to_string();
     let handles: Vec<_> = album_urls
         .into_iter()
-        .map(|url| std::thread::spawn(move || fetch_album_details(url)))
+        .map(|url| {
+            let b = browser.clone();
+            std::thread::spawn(move || fetch_album_details(url, &b))
+        })
         .collect();
 
     let mut results: Vec<YoutubeResult> = handles
@@ -151,7 +152,7 @@ pub fn search_albums(query: &str, page: usize) -> Result<Vec<YoutubeResult>, Str
     Ok(results)
 }
 
-fn fetch_album_details(url: String) -> Option<YoutubeResult> {
+fn fetch_album_details(url: String, browser: &str) -> Option<YoutubeResult> {
     let output = Command::new("yt-dlp")
         .args([
             "--dump-single-json",
@@ -159,7 +160,7 @@ fn fetch_album_details(url: String) -> Option<YoutubeResult> {
             "--no-warnings",
             "--quiet",
             "--cookies-from-browser",
-            "brave",
+            browser,
         ])
         .arg(&url)
         .output()
@@ -194,7 +195,7 @@ fn fetch_album_details(url: String) -> Option<YoutubeResult> {
 /// Search YouTube Music for artist channels matching `query`.
 /// Returns artist pages (UC* IDs) — selecting one can browse their discography.
 /// `page` is 0-based; fetches PAGE_SIZE results per page.
-pub fn search_artists(query: &str, page: usize) -> Result<Vec<YoutubeResult>, String> {
+pub fn search_artists(query: &str, page: usize, browser: &str) -> Result<Vec<YoutubeResult>, String> {
     let search_url = format!(
         "https://music.youtube.com/search?q={}",
         urlencoding::encode(query)
@@ -207,7 +208,7 @@ pub fn search_artists(query: &str, page: usize) -> Result<Vec<YoutubeResult>, St
             "--no-warnings",
             "--quiet",
             "--cookies-from-browser",
-            "brave",
+            browser,
         ])
         .arg(&search_url)
         .output()
@@ -237,10 +238,13 @@ pub fn search_artists(query: &str, page: usize) -> Result<Vec<YoutubeResult>, St
         return Ok(Vec::new());
     }
 
-    // Fetch each channel page in parallel to resolve the artist name
+    let browser = browser.to_string();
     let handles: Vec<_> = channel_urls
         .into_iter()
-        .map(|url| std::thread::spawn(move || fetch_artist_details(url)))
+        .map(|url| {
+            let b = browser.clone();
+            std::thread::spawn(move || fetch_artist_details(url, &b))
+        })
         .collect();
 
     let results: Vec<YoutubeResult> = handles
@@ -251,7 +255,7 @@ pub fn search_artists(query: &str, page: usize) -> Result<Vec<YoutubeResult>, St
     Ok(results)
 }
 
-fn fetch_artist_details(url: String) -> Option<YoutubeResult> {
+fn fetch_artist_details(url: String, browser: &str) -> Option<YoutubeResult> {
     let output = Command::new("yt-dlp")
         .args([
             "--dump-single-json",
@@ -259,7 +263,7 @@ fn fetch_artist_details(url: String) -> Option<YoutubeResult> {
             "--no-warnings",
             "--quiet",
             "--cookies-from-browser",
-            "brave",
+            browser,
         ])
         .arg(&url)
         .output()

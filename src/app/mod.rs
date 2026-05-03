@@ -275,6 +275,9 @@ pub struct AppState {
     pub repeat_mode: RepeatMode,
     /// True when shuffle is active
     pub shuffle: bool,
+
+    /// Browser yt-dlp reads cookies from (from config)
+    pub browser: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -303,8 +306,9 @@ impl RepeatMode {
 }
 
 impl AppState {
-    /// Create a new application state with default values.
+    /// Create a new application state from a loaded config.
     pub fn new(
+        cfg: &crate::config::Config,
         lyrics_rx: Receiver<LyricsFetchResult>,
         lyrics_tx: Sender<LyricsFetchResult>,
         search_rx: Receiver<SearchMessage>,
@@ -312,11 +316,7 @@ impl AppState {
         jobs_rx: Receiver<JobResult>,
         jobs_tx: Sender<JobResult>,
     ) -> Self {
-        let root_dir = PathBuf::from(
-            std::env::var("HOME")
-                .map(|h| format!("{}/Downloads/Media/Music", h))
-                .unwrap_or_else(|_| ".".into()),
-        );
+        let root_dir = cfg.music_root_path();
 
         Self {
             root_dir: root_dir.clone(),
@@ -357,6 +357,7 @@ impl AppState {
             youtube_has_more: false,
             repeat_mode: RepeatMode::Off,
             shuffle: false,
+            browser: cfg.browser.clone(),
         }
     }
 
