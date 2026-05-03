@@ -38,7 +38,7 @@ use crate::metadata::extract_metadata;
 use crate::search::{SearchMessage, filter_results, spawn_index_update, spawn_indexer};
 use app::{
     AppState, CommandState, FocusPane, InputMode, LyricsCacheKey, LyricsStatus, NavigationState,
-    NowPlaying, SearchStatus, StatusLevel,
+    NowPlaying, RepeatMode, SearchStatus, StatusLevel,
 };
 use crossterm::{
     execute,
@@ -500,13 +500,62 @@ fn spawn_youtube_search(
 }
 
 fn play_next_or_stop(app: &mut AppState) {
-    let next = app.album_selected + 1;
-
-    if next < app.album_entries.len() {
-        play_album_index(app, next);
-    } else {
+    let count = app.album_entries.len();
+    if count == 0 {
         app.player.stop();
         app.clear_playback();
+        return;
+    }
+
+    match app.repeat_mode {
+        RepeatMode::Track => {
+            // Replay the same track
+            play_album_index(app, app.album_selected);
+        }
+        RepeatMode::Album => {
+            let next = if app.shuffle {
+                shuffle_next_index(app)
+            } else {
+                (app.album_selected + 1) % count
+            };
+            play_album_index(app, next);
+        }
+        RepeatMode::Off => {
+            if app.shuffle {
+                let next = shuffle_next_index(app);
+                // In shuffle without repeat, stop when we've cycled through all tracks.
+                // Simple approach: just pick a random different track.
+                play_album_index(app, next);
+            } else {
+                let next = app.album_selected + 1;
+                if next < count {
+                    play_album_index(app, next);
+                } else {
+                    app.player.stop();
+                    app.clear_playback();
+                }
+            }
+        }
+    }
+}
+
+/// Pick a pseudo-random track index different from the current one.
+fn shuffle_next_index(app: &AppState) -> usize {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    let count = app.album_entries.len();
+    if count <= 1 {
+        return 0;
+    }
+    let mut h = DefaultHasher::new();
+    app.ui_tick.hash(&mut h);
+    app.album_selected.hash(&mut h);
+    let candidate = (h.finish() as usize) % (count - 1);
+    // Shift to avoid replaying the current track
+    if candidate >= app.album_selected {
+        candidate + 1
+    } else {
+        candidate
     }
 }
 
@@ -1556,6 +1605,24 @@ fn run_app() -> std::io::Result<()> {
                         play_album_index(&mut app, target);
                     }
 
+                    AppEvent::ToggleRepeat => {
+                        app.repeat_mode = app.repeat_mode.cycle();
+                        app.set_status(
+                            StatusLevel::Info,
+                            format!("Repeat: {}", app.repeat_mode.label()),
+                            Some(200),
+                        );
+                    }
+
+                    AppEvent::ToggleShuffle => {
+                        app.shuffle = !app.shuffle;
+                        app.set_status(
+                            StatusLevel::Info,
+                            format!("Shuffle: {}", if app.shuffle { "on" } else { "off" }),
+                            Some(200),
+                        );
+                    }
+
                     // Ignore command-mode events in normal mode
                     AppEvent::ExitCommandMode
                     | AppEvent::CommandChar(_)
@@ -1571,7 +1638,9 @@ fn run_app() -> std::io::Result<()> {
                     | AppEvent::SearchBackspace
                     | AppEvent::SearchMoveUp
                     | AppEvent::SearchMoveDown
-                    | AppEvent::SearchActivate => {}
+                    | AppEvent::SearchActivate
+                    | AppEvent::ToggleRepeat
+                    | AppEvent::ToggleShuffle => {}
                 }
             }
         }
