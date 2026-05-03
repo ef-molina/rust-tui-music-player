@@ -1136,14 +1136,17 @@ fn run_app() -> std::io::Result<()> {
 
                                 Command::SearchSong { query } => {
                                     spawn_youtube_search(&mut app, query, crate::youtube::SearchKind::Song, 0);
+                                    close_command_mode = true;
                                 }
 
                                 Command::SearchAlbum { query } => {
                                     spawn_youtube_search(&mut app, query, crate::youtube::SearchKind::Album, 0);
+                                    close_command_mode = true;
                                 }
 
                                 Command::SearchArtist { query } => {
                                     spawn_youtube_search(&mut app, query, crate::youtube::SearchKind::Artist, 0);
+                                    close_command_mode = true;
                                 }
 
                                 Command::Unknown(_) => {

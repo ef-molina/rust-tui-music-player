@@ -219,31 +219,68 @@ pub fn search_artists(query: &str, page: usize) -> Result<Vec<YoutubeResult>, St
         .map_err(|e| format!("Failed to parse yt-dlp output: {e}"))?;
 
     let skip = page * PAGE_SIZE;
-    let results: Vec<YoutubeResult> = root["entries"]
+    let channel_urls: Vec<String> = root["entries"]
         .as_array()
         .unwrap_or(&vec![])
         .iter()
         .filter_map(|e| {
             let id = e["id"].as_str()?;
-            // UC* = YouTube channel/artist page
-            if !id.starts_with("UC") {
-                return None;
+            if id.starts_with("UC") {
+                Some(e["url"].as_str()?.to_string())
+            } else {
+                None
             }
-            let title = e["title"].as_str().unwrap_or("Unknown Artist").to_string();
-            let url = e["url"].as_str()?.to_string();
-            Some(YoutubeResult {
-                title,
-                url,
-                kind: SearchKind::Artist,
-                subtitle: None,
-                track_count: None,
-            })
         })
         .skip(skip)
         .take(PAGE_SIZE)
         .collect();
 
+    if channel_urls.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // Fetch each channel page in parallel to resolve the artist name
+    let handles: Vec<_> = channel_urls
+        .into_iter()
+        .map(|url| std::thread::spawn(move || fetch_artist_details(url)))
+        .collect();
+
+    let results: Vec<YoutubeResult> = handles
+        .into_iter()
+        .filter_map(|h| h.join().ok().flatten())
+        .collect();
+
     Ok(results)
+}
+
+fn fetch_artist_details(url: String) -> Option<YoutubeResult> {
+    let output = Command::new("yt-dlp")
+        .args([
+            "--dump-single-json",
+            "--flat-playlist",
+            "--no-warnings",
+            "--quiet",
+            "--cookies-from-browser",
+            "brave",
+        ])
+        .arg(&url)
+        .output()
+        .ok()?;
+
+    let v: serde_json::Value = serde_json::from_slice(&output.stdout).ok()?;
+    let title = v["title"].as_str().filter(|s| !s.is_empty())?.to_string();
+    let subtitle = v["description"].as_str().map(|s| {
+        // Description can be long — take just the first line
+        s.lines().next().unwrap_or("").trim().to_string()
+    });
+
+    Some(YoutubeResult {
+        title,
+        url,
+        kind: SearchKind::Artist,
+        subtitle,
+        track_count: None,
+    })
 }
 
 // ---------------------------------------------------------------------------
