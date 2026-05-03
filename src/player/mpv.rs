@@ -63,6 +63,11 @@ impl MpvController {
         self.send(cmd);
     }
 
+    pub fn set_volume(&self, volume: u32) {
+        let cmd = format!(r#"{{ "command": ["set_property", "volume", {}] }}"#, volume);
+        self.send(&cmd);
+    }
+
     pub fn shutdown(&mut self) {
         // Ask mpv to quit cleanly (IMPORTANT)
         self.send(r#"{ "command": ["quit"] }"#);

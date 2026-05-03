@@ -1399,8 +1399,9 @@ pub fn draw(frame: &mut Frame, app: &AppState) {
         crate::app::RepeatMode::Album => "r alb",
     };
     let shuffle_label = if app.shuffle { "z shf" } else { "z ---" };
+    let vol = app.player.volume;
     let controls = format!(
-        "←/→ seek  < prev  > next   s stop   space pause   {repeat_label}  {shuffle_label}   / search   : command   q quit"
+        "←/→ seek  < prev  > next   s stop   space pause   =/- vol:{vol}%   {repeat_label}  {shuffle_label}   / search   : command   q quit"
     );
     frame.render_widget(
         Paragraph::new(controls)

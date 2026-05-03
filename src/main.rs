@@ -1628,6 +1628,24 @@ fn run_app() -> std::io::Result<()> {
                         );
                     }
 
+                    AppEvent::VolumeUp => {
+                        app.player.adjust_volume(5);
+                        app.set_status(
+                            StatusLevel::Info,
+                            format!("Volume: {}%", app.player.volume),
+                            Some(150),
+                        );
+                    }
+
+                    AppEvent::VolumeDown => {
+                        app.player.adjust_volume(-5);
+                        app.set_status(
+                            StatusLevel::Info,
+                            format!("Volume: {}%", app.player.volume),
+                            Some(150),
+                        );
+                    }
+
                     // Ignore command-mode events in normal mode
                     AppEvent::ExitCommandMode
                     | AppEvent::CommandChar(_)
@@ -1645,7 +1663,9 @@ fn run_app() -> std::io::Result<()> {
                     | AppEvent::SearchMoveDown
                     | AppEvent::SearchActivate
                     | AppEvent::ToggleRepeat
-                    | AppEvent::ToggleShuffle => {}
+                    | AppEvent::ToggleShuffle
+                    | AppEvent::VolumeUp
+                    | AppEvent::VolumeDown => {}
                 }
             }
         }
