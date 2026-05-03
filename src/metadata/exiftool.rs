@@ -34,6 +34,7 @@ pub fn extract(path: &Path) -> Option<TrackMetadata> {
     Some(TrackMetadata {
         title,
         artist,
+        album_artist: None,
         album,
         duration_secs,
 

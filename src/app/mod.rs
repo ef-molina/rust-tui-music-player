@@ -19,6 +19,7 @@ use crate::lyrics_fetch::LyricsFetchResult;
 use crate::metadata::model::TrackMetadata;
 use crate::player::Player;
 use crate::search::SearchMessage;
+use crate::youtube::{SearchKind, YoutubeResult};
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, Sender};
@@ -60,6 +61,8 @@ pub enum FocusPane {
     Album,
     /// Lyrics pane is focused
     Lyrics,
+    /// YouTube search results pane
+    YoutubeResults,
 }
 
 // Currently playing track information
@@ -158,6 +161,14 @@ pub enum InputMode {
     Search,
 }
 
+#[derive(Debug, Clone)]
+pub struct DownloadState {
+    pub track_title: String,
+    pub track_index: u32,
+    pub total_tracks: u32,
+    pub overall_percent: f32,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NavigationState {
     pub focus: FocusPane,
@@ -240,8 +251,25 @@ pub struct AppState {
     /// Active download URL for long-running job visibility
     pub active_download_url: Option<String>,
 
+    /// Live download progress shown in the footer
+    pub active_download: Option<DownloadState>,
+
     /// Bounded history of previous navigation states
     pub navigation_history: Vec<NavigationState>,
+
+    /// YouTube search results
+    pub youtube_results: Vec<YoutubeResult>,
+    pub youtube_selected: usize,
+    /// True while a background YouTube search thread is running
+    pub youtube_searching: bool,
+    /// Which type of search produced the current results
+    pub youtube_search_kind: SearchKind,
+    /// 0-based page number of the currently loaded results
+    pub youtube_page: usize,
+    /// The query that produced the current results (used for load-more)
+    pub youtube_query: String,
+    /// True if the last search returned a full page (more may exist)
+    pub youtube_has_more: bool,
 }
 
 impl AppState {
@@ -288,7 +316,15 @@ impl AppState {
             search_tx,
             status_message: None,
             active_download_url: None,
+            active_download: None,
             navigation_history: Vec::new(),
+            youtube_results: Vec::new(),
+            youtube_selected: 0,
+            youtube_searching: false,
+            youtube_search_kind: SearchKind::Song,
+            youtube_page: 0,
+            youtube_query: String::new(),
+            youtube_has_more: false,
         }
     }
 

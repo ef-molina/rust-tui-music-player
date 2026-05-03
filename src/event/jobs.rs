@@ -1,8 +1,6 @@
-//! Background job results (download/normalize/etc).
-//!
-//! These are messages sent from worker threads back to the main loop.
-//! This is intentionally separate from AppEvent (which represents user/UI events).
+//! Background job results (download/search/etc).
 
+use crate::youtube::YoutubeResult;
 use std::path::PathBuf;
 
 #[derive(Debug, Clone)]
@@ -11,7 +9,15 @@ pub enum JobResult {
         url: String,
     },
 
-    /// yt-dlp finished and produced a file at this path (usually inside a staging dir)
+    DownloadProgress {
+        url: String,
+        track_percent: f32,
+        overall_percent: f32,
+        track_title: String,
+        track_index: u32,
+        total_tracks: u32,
+    },
+
     DownloadFinished {
         url: String,
         temp_path: PathBuf,
@@ -21,4 +27,13 @@ pub enum JobResult {
         url: String,
         error: String,
     },
+
+    /// Search completed — results are appended to existing list when paginating
+    YoutubeSearchDone {
+        results: Vec<YoutubeResult>,
+        /// true if there may be more results available (another page exists)
+        has_more: bool,
+    },
+
+    YoutubeSearchFailed(String),
 }
