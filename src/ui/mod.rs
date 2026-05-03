@@ -1388,11 +1388,18 @@ pub fn draw(frame: &mut Frame, app: &AppState) {
         footer_rows[1],
     );
 
-    // Controls hint
+    // Controls hint with live repeat/shuffle indicators
+    let repeat_label = match app.repeat_mode {
+        crate::app::RepeatMode::Off   => "r off",
+        crate::app::RepeatMode::Track => "r trk",
+        crate::app::RepeatMode::Album => "r alb",
+    };
+    let shuffle_label = if app.shuffle { "z shf" } else { "z ---" };
+    let controls = format!(
+        "←/→ seek  < prev  > next   s stop   space pause   {repeat_label}  {shuffle_label}   / search   : command   q quit"
+    );
     frame.render_widget(
-        Paragraph::new(
-            "←/→ seek  < prev  > next   s stop   space pause   / search   : command   q quit",
-        )
+        Paragraph::new(controls)
         .alignment(Alignment::Center)
         .style(muted_style()),
         footer_rows[2],

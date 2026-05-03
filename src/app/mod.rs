@@ -270,6 +270,36 @@ pub struct AppState {
     pub youtube_query: String,
     /// True if the last search returned a full page (more may exist)
     pub youtube_has_more: bool,
+
+    /// Playback repeat mode
+    pub repeat_mode: RepeatMode,
+    /// True when shuffle is active
+    pub shuffle: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RepeatMode {
+    Off,
+    Track,
+    Album,
+}
+
+impl RepeatMode {
+    pub fn cycle(self) -> Self {
+        match self {
+            RepeatMode::Off => RepeatMode::Track,
+            RepeatMode::Track => RepeatMode::Album,
+            RepeatMode::Album => RepeatMode::Off,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            RepeatMode::Off => "off",
+            RepeatMode::Track => "track",
+            RepeatMode::Album => "album",
+        }
+    }
 }
 
 impl AppState {
@@ -325,6 +355,8 @@ impl AppState {
             youtube_page: 0,
             youtube_query: String::new(),
             youtube_has_more: false,
+            repeat_mode: RepeatMode::Off,
+            shuffle: false,
         }
     }
 
