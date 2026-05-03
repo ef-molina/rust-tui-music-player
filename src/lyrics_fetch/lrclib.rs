@@ -1,5 +1,6 @@
 use crate::metadata::model::TrackMetadata;
 use serde::Deserialize;
+use std::time::Duration;
 use tracing::{debug, trace, warn};
 
 #[derive(Debug, Deserialize)]
@@ -13,6 +14,16 @@ enum FetchTier {
     ExactAlbum,
     AlbumOmitted,
     SingleCanonical,
+}
+
+/// Create a configured HTTP agent for lrclib requests.
+/// This agent has timeouts suitable for lyric fetching.
+/// Returns a ureq::Agent instance.
+fn lrclib_agent() -> ureq::Agent {
+    ureq::AgentBuilder::new()
+        .timeout_connect(Duration::from_secs(4))
+        .timeout_read(Duration::from_secs(8))
+        .build()
 }
 
 /// Fetch synced lyrics from lrclib.net using a tiered identity strategy.
@@ -42,6 +53,14 @@ pub fn fetch_lrc(meta: &TrackMetadata) -> Result<Option<String>, ()> {
         duration,
         confidence = ?meta.confidence,
         "Starting lrclib lookup"
+    );
+
+    debug!(
+        title = %title,
+        artist = %artist,
+        album = meta.album.as_deref().unwrap_or("<none>"),
+        duration,
+        "lrclib canonical query"
     );
 
     // ------------------------------------------------------------
@@ -98,10 +117,11 @@ fn try_fetch(
 
     debug!(?tier, %url, "Sending lrclib request");
 
-    let response = match ureq::get(&url).call() {
+    let agent = lrclib_agent();
+    let response = match agent.get(&url).call() {
         Ok(resp) => resp,
-        Err(_) => {
-            warn!(?tier, "lrclib HTTP request failed");
+        Err(err) => {
+            warn!(?tier, error = %err, "lrclib HTTP request failed");
             return Ok(None);
         }
     };

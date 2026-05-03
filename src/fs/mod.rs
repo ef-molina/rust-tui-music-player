@@ -9,6 +9,8 @@
 //! - No global state
 //! - All paths are provided by the caller
 
+pub mod normalize;
+
 use std::fs;
 use std::path::Path;
 
@@ -44,11 +46,6 @@ pub fn detect_album(dir: &Path) -> std::io::Result<Option<Vec<BrowserEntry>>> {
     Ok(Some(tracks))
 }
 
-// pub fn is_leaf_album(dir: &Path) -> bool {
-//     detect_album(dir).ok().flatten().is_some()
-// }
-
-/// Return loose audio tracks in a directory, if any.
 /// Unlike `detect_album`, this allows subdirectories.
 pub fn detect_loose_tracks(dir: &Path) -> std::io::Result<Option<Vec<BrowserEntry>>> {
     let entries = read_dir(dir)?;

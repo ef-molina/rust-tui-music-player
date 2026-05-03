@@ -1,3 +1,7 @@
+# Developer README — rust-tui-music-player
+
+---
+
 ## 1. Overview
 
 **rust-tui-music-player** is a terminal-based music player built in Rust with a focus on:
@@ -16,7 +20,9 @@ This is a developer-focused project emphasizing maintainability, debuggability, 
 
 ### Rust Toolchain
 
-- **Rust 1.70+** (the codebase assumes Rust 2021 semantics; `Cargo.toml` currently specifies `edition = "2024"` and should be aligned intentionally)
+- **Rust 1.70+**
+- The codebase assumes Rust 2021 semantics  
+  (`Cargo.toml` currently specifies `edition = "2024"` and should be aligned intentionally)
 - Standard toolchain via `rustup`
 
 ### External Dependencies (Runtime)
@@ -73,7 +79,8 @@ tail -f debug.log
 
 ### Default Music Directory
 
-The app defaults to `$HOME/Downloads/Media/Music`. This is hardcoded in `mod.rs`:
+The app defaults to `$HOME/Downloads/Media/Music`.
+This is intentionally hardcoded during early development to reduce configuration complexity while core architecture stabilizes.
 
 ```rust
 let root_dir = PathBuf::from(
@@ -108,19 +115,26 @@ The event loop in `main.rs` is the **only** code that mutates `AppState`.
 - **Input module**: stateless translation from keyboard to `AppEvent`
 - **Player module**: encapsulates mpv state, but does not mutate `AppState`
 
+---
+
 ### Concurrency Model
 
 | Thread                  | Responsibility                                         | Blocking?                                 |
 | ----------------------- | ------------------------------------------------------ | ----------------------------------------- |
 | **Main thread**         | Event loop, state mutations, UI rendering, mpv polling | No — uses non-blocking `poll_event(10ms)` |
-| **Lyrics fetch worker** | HTTP request to lrclib.net, spawned per track          | Yes — blocks on network I/O               |
+| **Lyrics fetch worker** | HTTP requests with bounded timeouts                    | Yes — isolated from UI                    |
 
-**Critical invariant**: The main thread never blocks on network or IPC I/O.
+**Critical invariant**:
+The main thread never blocks on network or IPC I/O.
+
 Filesystem operations are synchronous but intentionally scoped to small, bounded operations.
+
+---
 
 ### mpv Integration
 
-- mpv is spawned as a child process on startup with `--input-ipc-server=/tmp/rust-tui-mpv.sock`
+- mpv is spawned as a child process on startup with
+  `--input-ipc-server=/tmp/rust-tui-mpv.sock`
 - Communication occurs via JSON IPC over a Unix socket
 - Commands: `loadfile`, `set_property pause`, `seek`, `stop`, `quit`
 - Queries: `get_property time-pos`, `get_property duration`
@@ -206,7 +220,8 @@ pub fn poll_event(timeout: Duration) -> io::Result<Option<AppEvent>>
 
 **Purpose**: ffprobe primary, exiftool fallback.
 
-**Lyrics gate**: Only complete metadata triggers lyrics fetch.
+**Lyrics gate**:
+Only complete metadata triggers lyrics fetching.
 
 ---
 
@@ -222,17 +237,23 @@ pub fn poll_event(timeout: Duration) -> io::Result<Option<AppEvent>>
 
 **Behavior**:
 
-- 3-tier lookup strategy
-- Blocking HTTP on worker thread
-- Atomic write: `.lrc.tmp` → `.lrc`
-- A failed fetch is terminal for the current track activation; retries occur only on subsequent activations
+- Tiered lookup strategy:
+  1. Title + artist + duration + album
+  2. Title + artist + duration
+  3. Canonical single fallback
+
+- Blocking HTTP requests executed on a worker thread
+- Explicit network timeouts (connect + read)
+- Results guarded by a monotonically increasing request ID to prevent stale fetch results from applying after rapid track changes
+- Atomic write: `.lrc.tmp` → `.lrc` when committing lyrics
+
+A failed fetch is terminal for the current track activation; retries occur only on subsequent activations.
 
 **Known limitations**:
 
-- No per-tier timeout
-- No cancellation on track change
-- No negative cache
-- Orphaned `.lrc.tmp` files possible
+- No active cancellation of in-flight fetches (stale results are safely ignored)
+- No negative cache for repeated fetch failures
+- Orphaned `.lrc.tmp` files possible on crash
 
 ---
 
@@ -247,6 +268,8 @@ tracing_subscriber::fmt()
     .with_writer(log_file)
     .init();
 ```
+
+Structured logging is used to enable postmortem debugging without impacting UI responsiveness.
 
 Use:
 
@@ -281,18 +304,24 @@ RUST_LOG=trace cargo run
 
 ### High Priority
 
-- No negative lyrics cache
-- No cancellation for in-flight lyrics fetch
-- No HTTP timeouts
+- No active cancellation for in-flight lyrics fetches (results are intentionally handled instead)
 - Silent mpv IPC failures
 - Hardcoded music root directory
 
 ### Medium / Low
 
 - Aggressive metrics polling (10ms)
-- Orphaned `.lrc.tmp` files
+- No active cancellation of in-flight fetches (stale results are safely handled)
+- Orphaned `.lrc.tmp` files possible on crash
 - No dependency validation
 - No UI error reporting
+
+**Implemented behavior**:
+
+- In-flight lyrics fetches are not cancelled when switching tracks
+- Successful fetches always write `.lrc` sidecar files, even if the user navigates away
+- Stale fetch results never update UI state, but are persisted for future playback
+- Failed fetches are recorded in an in-memory negative cache to avoid repeated network requests
 
 ---
 
@@ -300,15 +329,16 @@ RUST_LOG=trace cargo run
 
 ### Near-Term
 
-- `.lrc.failed` negative cache
-- Per-tier HTTP timeouts
+- Optional persistence for lyrics cache (disk-level reuse)
+- User-configurable control over automatic lyrics downloading
 - mpv socket lifecycle fixes
 
 ### Medium-Term
 
+- Central disk cache for opportunistic lyrics reuse
 - Configurable music directory
 - Dependency validation
-- Lyrics fetch cancellation
+- Best-effort lyrics fetch cancellation
 
 ### Long-Term
 
@@ -333,5 +363,3 @@ src/
 ├── lyrics/
 └── lyrics_fetch/
 ```
-
----

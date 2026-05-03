@@ -31,20 +31,6 @@ impl LyricsState {
     pub fn current(&self) -> Option<&LyricLine> {
         self.lines.get(self.current_index)
     }
-
-    /// Get the previous lyric line (for context), if any.
-    pub fn previous(&self) -> Option<&LyricLine> {
-        if self.current_index > 0 {
-            self.lines.get(self.current_index - 1)
-        } else {
-            None
-        }
-    }
-
-    /// Get the next lyric line (for context), if any.
-    pub fn next(&self) -> Option<&LyricLine> {
-        self.lines.get(self.current_index + 1)
-    }
 }
 
 // ==============================================================

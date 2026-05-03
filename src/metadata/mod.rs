@@ -1,6 +1,8 @@
 pub mod exiftool;
 pub mod ffprobe;
 pub mod model;
+pub mod parse;
+pub mod write;
 
 use std::path::Path;
 

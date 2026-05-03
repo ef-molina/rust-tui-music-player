@@ -11,7 +11,10 @@
 //! - The event loop reacts to events and mutates `AppState`
 //! - This keeps UI, input, and player logic decoupled
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub mod commands;
+pub mod jobs;
+
+#[derive(PartialEq, Eq)]
 pub enum AppEvent {
     /// Request to quit the application.
     Quit,
@@ -22,7 +25,7 @@ pub enum AppEvent {
     /// Navigate the file browser.
     MoveUp,
     MoveDown,
-    NavigateUp,
+    NavigateBack,
     Activate,
 
     /// Media playback controls.
@@ -38,4 +41,25 @@ pub enum AppEvent {
     FocusBrowser,
     FocusAlbum,
     FocusLyrics,
+
+    // Command mode events
+    EnterCommandMode,
+    ExitCommandMode,
+    CommandChar(char),
+    CommandBackspace,
+    SubmitCommand,
+    TextMoveLeft,
+    TextMoveRight,
+    TextDelete,
+    TextMoveHome,
+    TextMoveEnd,
+
+    // Search mode events
+    EnterSearchMode,
+    ExitSearchMode,
+    SearchChar(char),
+    SearchBackspace,
+    SearchMoveUp,
+    SearchMoveDown,
+    SearchActivate,
 }

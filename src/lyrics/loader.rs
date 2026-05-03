@@ -58,22 +58,32 @@ mod tests {
     use tempfile::tempdir;
 
     fn complete_metadata() -> TrackMetadata {
-        TrackMetadata {
+        TrackMetadata { album_artist: None,
             title: "Song".into(),
             artist: "Artist".into(),
             album: Some("Album".into()),
             duration_secs: 10.0,
             confidence: MetadataConfidence::Exact,
+            date: None,
+            track: None,
+            purl: None,
+            comment: None,
+            synopsis: None,
         }
     }
 
     fn incomplete_metadata() -> TrackMetadata {
-        TrackMetadata {
+        TrackMetadata { album_artist: None,
             title: "".into(),
             artist: "".into(),
             album: None,
             duration_secs: 0.0,
             confidence: MetadataConfidence::FilenameOnly,
+            date: None,
+            track: None,
+            purl: None,
+            comment: None,
+            synopsis: None,
         }
     }
 

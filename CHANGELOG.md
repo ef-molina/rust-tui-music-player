@@ -1,0 +1,154 @@
+# Changelog
+
+All notable, user-facing changes to this project are documented in this file.
+
+This project follows [Semantic Versioning](https://semver.org/).
+
+---
+
+## [v0.2.0] – 2026-05-02
+
+### Added
+
+#### YouTube Music Integration
+
+- Artist, album, and song search via YouTube Music using `:sa`, `:salb`, and `:ss`
+  commands (full-word aliases: `artistsearch`, `albumsearch`, `songsearch`)
+- Results paginate in groups of 20 with a navigable "Load more" row
+- Each result shows a kind badge (♪ song / ▣ album / ◉ artist) for clarity
+- Selecting an album result downloads all tracks individually as separate files
+- Selecting a song result downloads and normalizes a single track
+- Real-time download progress shown in the status bar: track title, position in
+  album (e.g. 3/12), and overall percentage bar
+
+#### Download & Normalization
+
+- Deterministic library layout: `Artist/Year - Album/Title.opus`
+- Primary artist extracted from YouTube Music comment metadata so collaborative
+  albums stay in one folder (e.g. a Dr. Dre album with 20 different featured
+  artists no longer creates 20 separate directories)
+- Each track in a multi-track album is individually normalized and indexed
+- Per-job staging subdirectory prevents concurrent downloads interfering with
+  each other
+- Browser and album pane refresh automatically when downloaded tracks land in
+  the currently viewed directory
+
+#### Command Bar
+
+- Pressing Enter on a partial command (e.g. `d`) autofills the top suggestion
+  (`download `) instead of submitting unknown
+- Active command name shown as a badge in the command bar title once a command
+  is recognized
+- Unknown and incomplete commands show a warning status instead of silently failing
+
+### Fixed
+
+- Unicode-safe middle truncation no longer panics on multibyte (non-ASCII) filenames
+- Multi-track album downloads now save all tracks, not just the last one written
+  to the staging directory
+
+---
+
+## [v0.1.1] – 2026-04-15
+
+### Added
+
+#### Lyrics
+
+- In-memory negative cache to avoid repeated network fetches for tracks with no synced lyrics
+- Automatic background writing of fetched lyrics to `.lrc` files, even if the user skips tracks before fetch completion
+- Deterministic handling of stale lyrics fetches without blocking the main event loop
+
+#### Search & Library
+
+- Recursive background library indexing for music search
+- Metadata-enriched search over artist, title, album, file name, and path
+- Search result ranking that prioritizes exact metadata matches over path-only matches
+- Search result activation that jumps to and plays the selected track
+- Incremental search upserts after successful normalization so newly added tracks appear without restart
+- Bounded navigation history for browser/search flows with `Backspace` back-navigation in normal mode
+
+#### UI & Interaction
+
+- Dedicated search mode opened with `/`, including in-buffer text editing and restore-on-`Esc`
+- Centered modal search picker overlay with a dimmed backdrop
+- Dedicated statusline for indexing, downloads, lyrics fetch state, and transient feedback
+- Refined header/footer hierarchy with clearer status badges and now-playing metadata
+- Larger compact lyrics pane for better readability in the split view
+- Height-driven compact lyrics rendering that fills the larger pane with more surrounding lyric context
+- Inline `:` command helper panel with discoverable command syntax and descriptions
+- Command-helper autofill so `Enter` accepts the top matching command before execution
+- Visual active-command state in the command bar once a helper suggestion is accepted
+- Cleaner visible track labels that hide numeric filename prefixes like `01. `
+- Slower, more readable marquee timing for long labels
+- Unicode-safe text truncation in the UI to avoid crashes on multibyte characters
+- Consistent pane styling, counts in pane titles, and richer search result presentation
+
+---
+
+## [v0.1.0] – Initial Release
+
+### Added
+
+#### Core Browsing & Playback
+
+- Filesystem-first music browser with deterministic, keyboard-driven navigation
+- Album-aware playback based on directory structure (no database or indexing)
+- mpv-based playback backend using JSON IPC for stable, non-blocking audio control
+- Standard playback controls: play, pause, stop, seek, next/previous track
+- Automatic track advance within an album
+- “Jump to now playing” navigation for fast context recovery
+
+#### Lyrics (Primary Feature)
+
+- Time-synced lyrics support via `.lrc` files
+- Local-first lyrics loading with automatic background fetching when missing
+- Lyrics fetched using track metadata and cached as `.lrc` files alongside audio
+- Spotify-like synced lyrics experience without a graphical UI
+- Lyrics remain correctly synchronized when seeking forward or backward
+- Dedicated lyrics view mode for focused reading
+
+#### UI & Interaction
+
+- Non-blocking, flicker-free terminal UI
+- Clear separation between browser, track list, lyrics, and now-playing views
+- Real-time playback progress display with elapsed and total duration
+- Visual highlighting of the currently playing track
+
+---
+
+### Guarantees
+
+- The filesystem is the single source of truth (no database, no indexing)
+- All mutable application state is owned by a single, explicit `AppState`
+- UI rendering is pure and side-effect free
+- The main event loop never blocks on I/O or network activity
+- Background tasks (e.g. lyrics fetching) do not interfere with UI responsiveness
+- Lyrics synchronization is deterministic and resynchronizes correctly after seeking
+
+---
+
+### Known Limitations
+
+- No playlist management (album-based playback only)
+- No volume control within the UI (delegated to mpv defaults)
+- No streaming or remote file support
+- Music root directory is currently static
+- Limited metadata display beyond basic track and album information
+- In-flight lyrics fetches are not cancelled when switching tracks (results are safely handled instead)
+- Unix-only support (mpv IPC via Unix sockets)
+
+---
+
+### Non-Goals
+
+- Graphical (GUI) interface
+- Streaming service integration
+- Music library management or tagging tools
+- Database-backed indexing
+- Complex playlist editors or queue systems
+
+---
+
+This release establishes a stable architectural foundation focused on
+clarity, determinism, and a lightweight, lyrics-centric listening experience.
