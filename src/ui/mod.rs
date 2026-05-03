@@ -873,8 +873,12 @@ fn render_youtube_results(frame: &mut Frame, area: Rect, app: &AppState) {
     state.select(Some(app.youtube_selected));
     frame.render_stateful_widget(list, area, &mut state);
 
-    // Hint line at bottom
-    let hint = Paragraph::new("Enter select · Backspace back · ↑↓ move")
+    // Hint line at bottom — context-sensitive based on selected result kind
+    let hint_text = match app.youtube_results.get(app.youtube_selected) {
+        Some(r) if r.kind == crate::youtube::SearchKind::Artist => "Enter browse albums · Backspace back · ↑↓ move",
+        _ => "Enter download · Backspace back · ↑↓ move",
+    };
+    let hint = Paragraph::new(hint_text)
         .alignment(Alignment::Center)
         .style(Style::default().fg(SUBTLE));
     let hint_area = Rect {
@@ -1388,11 +1392,19 @@ pub fn draw(frame: &mut Frame, app: &AppState) {
         footer_rows[1],
     );
 
-    // Controls hint
+    // Controls hint with live repeat/shuffle indicators
+    let repeat_label = match app.repeat_mode {
+        crate::app::RepeatMode::Off   => "r off",
+        crate::app::RepeatMode::Track => "r trk",
+        crate::app::RepeatMode::Album => "r alb",
+    };
+    let shuffle_label = if app.shuffle { "z shf" } else { "z ---" };
+    let vol = app.player.volume;
+    let controls = format!(
+        "←/→ seek  < prev  > next   s stop   space pause   =/- vol:{vol}%   {repeat_label}  {shuffle_label}   d queue   x cancel   / search   : cmd   q quit"
+    );
     frame.render_widget(
-        Paragraph::new(
-            "←/→ seek  < prev  > next   s stop   space pause   / search   : command   q quit",
-        )
+        Paragraph::new(controls)
         .alignment(Alignment::Center)
         .style(muted_style()),
         footer_rows[2],
@@ -1433,6 +1445,74 @@ pub fn draw(frame: &mut Frame, app: &AppState) {
     if matches!(app.input_mode, InputMode::Search) {
         render_search_picker(frame, chunks[1], app);
     }
+
+    if app.show_download_queue {
+        let area = centered_rect(60, 70, frame.size());
+        render_download_queue(frame, area, app);
+    }
+}
+
+fn render_download_queue(frame: &mut Frame, area: Rect, app: &AppState) {
+    use crate::app::DownloadJobStatus;
+
+    frame.render_widget(Clear, area);
+
+    let block = Block::default()
+        .title(" Downloads  (d close · x cancel active) ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(ACCENT).add_modifier(Modifier::BOLD));
+
+    if app.download_jobs.is_empty() {
+        frame.render_widget(
+            Paragraph::new("No downloads yet.")
+                .alignment(Alignment::Center)
+                .style(muted_style())
+                .block(block),
+            area,
+        );
+        return;
+    }
+
+    let items: Vec<ListItem> = app
+        .download_jobs
+        .iter()
+        .rev()
+        .map(|job| {
+            let (status_span, title_style) = match &job.status {
+                DownloadJobStatus::Active => (
+                    Span::styled(" ⬇ ", Style::default().fg(Color::Black).bg(ACCENT).add_modifier(Modifier::BOLD)),
+                    Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+                ),
+                DownloadJobStatus::Done => (
+                    Span::styled(" ✓ ", Style::default().fg(Color::Black).bg(Color::Rgb(102, 187, 106)).add_modifier(Modifier::BOLD)),
+                    Style::default().fg(MUTED),
+                ),
+                DownloadJobStatus::Failed(_) => (
+                    Span::styled(" ✗ ", Style::default().fg(Color::White).bg(DANGER).add_modifier(Modifier::BOLD)),
+                    Style::default().fg(MUTED),
+                ),
+                DownloadJobStatus::Cancelled => (
+                    Span::styled(" — ", Style::default().fg(Color::White).bg(SUBTLE).add_modifier(Modifier::BOLD)),
+                    Style::default().fg(SUBTLE),
+                ),
+            };
+
+            let title_width = area.width.saturating_sub(10) as usize;
+            let title = truncate_middle(&job.title, title_width);
+
+            let mut spans = vec![status_span, Span::raw(" "), Span::styled(title, title_style)];
+
+            if let DownloadJobStatus::Failed(err) = &job.status {
+                let err_short = truncate_middle(err, title_width.saturating_sub(4));
+                spans.push(Span::styled(format!("  {err_short}"), Style::default().fg(DANGER)));
+            }
+
+            ListItem::new(Line::from(spans))
+        })
+        .collect();
+
+    let list = List::new(items).block(block);
+    frame.render_widget(list, area);
 }
 
 #[cfg(test)]

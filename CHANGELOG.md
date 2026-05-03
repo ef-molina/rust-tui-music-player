@@ -6,6 +6,45 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [v0.3.0] – 2026-05-02
+
+### Added
+
+#### Playback Controls
+
+- Volume control: `=` raises volume 5%, `-` lowers it (0–150% range via mpv). Current level shown live in the footer
+- Repeat mode: `r` cycles through off → track → album. Current mode shown in the footer
+- Shuffle mode: `z` toggles shuffle. When active, next track is picked pseudo-randomly from the album
+
+#### Download Queue & Cancellation
+
+- `d` opens a download queue overlay showing all recent jobs with status badges (active / done / failed / cancelled)
+- `x` cancels the active download by terminating the yt-dlp process immediately
+- Download history is retained for up to 20 jobs per session
+
+#### Configuration
+
+- Optional config file at `~/.config/rust-tui-music-player/config.toml`
+- Supports `music_root` (library path) and `browser` (cookie source for yt-dlp)
+- Falls back gracefully to built-in defaults when the file is absent or malformed
+- `config.example.toml` included in the repository as a reference
+
+#### Search Improvements
+
+- `:ss` now searches YouTube Music instead of regular YouTube, returning clean audio tracks rather than music videos and reaction content
+- `:salb` includes YouTube Music playlist entries (VL\*) alongside official album releases (MPREb\*), roughly doubling the number of results
+- Selecting an `:sa` artist result now drills into their albums (`:salb`) instead of attempting to download the whole channel
+- Result hint line updates contextually — shows "browse albums" for artist results, "download" for songs and albums
+
+### Fixed
+
+- `yt-dlp` absence is detected before entering raw terminal mode, so the error message is readable instead of appearing in a broken state
+- Per-job staging subdirectories are removed after all tracks normalize, preventing indefinite accumulation of temp files
+- Command bar now closes immediately when a search command (`:ss`, `:salb`, `:sa`) is submitted, making results navigable without an extra Escape
+- Artist search resolved real names instead of showing "Unknown Artist" for all results
+
+---
+
 ## [v0.2.0] – 2026-05-02
 
 ### Added

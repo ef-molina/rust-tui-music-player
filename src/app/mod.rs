@@ -161,6 +161,21 @@ pub enum InputMode {
     Search,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DownloadJobStatus {
+    Active,
+    Done,
+    Failed(String),
+    Cancelled,
+}
+
+#[derive(Debug, Clone)]
+pub struct DownloadJob {
+    pub title: String,
+    pub url: String,
+    pub status: DownloadJobStatus,
+}
+
 #[derive(Debug, Clone)]
 pub struct DownloadState {
     pub track_title: String,
@@ -254,6 +269,15 @@ pub struct AppState {
     /// Live download progress shown in the footer
     pub active_download: Option<DownloadState>,
 
+    /// PID of the active yt-dlp process (used for cancellation)
+    pub active_download_pid: Option<u32>,
+
+    /// Rolling history of all download jobs (capped at 20)
+    pub download_jobs: Vec<DownloadJob>,
+
+    /// Whether the download queue overlay is visible
+    pub show_download_queue: bool,
+
     /// Bounded history of previous navigation states
     pub navigation_history: Vec<NavigationState>,
 
@@ -270,11 +294,45 @@ pub struct AppState {
     pub youtube_query: String,
     /// True if the last search returned a full page (more may exist)
     pub youtube_has_more: bool,
+
+    /// Playback repeat mode
+    pub repeat_mode: RepeatMode,
+    /// True when shuffle is active
+    pub shuffle: bool,
+
+    /// Browser yt-dlp reads cookies from (from config)
+    pub browser: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RepeatMode {
+    Off,
+    Track,
+    Album,
+}
+
+impl RepeatMode {
+    pub fn cycle(self) -> Self {
+        match self {
+            RepeatMode::Off => RepeatMode::Track,
+            RepeatMode::Track => RepeatMode::Album,
+            RepeatMode::Album => RepeatMode::Off,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            RepeatMode::Off => "off",
+            RepeatMode::Track => "track",
+            RepeatMode::Album => "album",
+        }
+    }
 }
 
 impl AppState {
-    /// Create a new application state with default values.
+    /// Create a new application state from a loaded config.
     pub fn new(
+        cfg: &crate::config::Config,
         lyrics_rx: Receiver<LyricsFetchResult>,
         lyrics_tx: Sender<LyricsFetchResult>,
         search_rx: Receiver<SearchMessage>,
@@ -282,11 +340,7 @@ impl AppState {
         jobs_rx: Receiver<JobResult>,
         jobs_tx: Sender<JobResult>,
     ) -> Self {
-        let root_dir = PathBuf::from(
-            std::env::var("HOME")
-                .map(|h| format!("{}/Downloads/Media/Music", h))
-                .unwrap_or_else(|_| ".".into()),
-        );
+        let root_dir = cfg.music_root_path();
 
         Self {
             root_dir: root_dir.clone(),
@@ -317,6 +371,9 @@ impl AppState {
             status_message: None,
             active_download_url: None,
             active_download: None,
+            active_download_pid: None,
+            download_jobs: Vec::new(),
+            show_download_queue: false,
             navigation_history: Vec::new(),
             youtube_results: Vec::new(),
             youtube_selected: 0,
@@ -325,6 +382,9 @@ impl AppState {
             youtube_page: 0,
             youtube_query: String::new(),
             youtube_has_more: false,
+            repeat_mode: RepeatMode::Off,
+            shuffle: false,
+            browser: cfg.browser.clone(),
         }
     }
 

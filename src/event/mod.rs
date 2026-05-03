@@ -36,6 +36,12 @@ pub enum AppEvent {
     JumpToNowPlaying,
     NextTrack,
     PrevTrack,
+    ToggleRepeat,
+    ToggleShuffle,
+    VolumeUp,
+    VolumeDown,
+    ToggleDownloadQueue,
+    CancelDownload,
 
     /// Switch focus to diffent panes.
     FocusBrowser,

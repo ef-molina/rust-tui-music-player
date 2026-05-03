@@ -25,6 +25,7 @@ pub struct Player {
     pub state: PlaybackState,
     pub metrics: PlaybackMetrics,
     pub current_track: Option<PathBuf>,
+    pub volume: u32,
     mpv: MpvController,
     has_started: bool,
 }
@@ -37,9 +38,15 @@ impl Player {
             state: PlaybackState::Stopped,
             metrics: PlaybackMetrics::default(),
             current_track: None,
+            volume: 100,
             mpv,
             has_started: false,
         }
+    }
+
+    pub fn adjust_volume(&mut self, delta: i32) {
+        self.volume = (self.volume as i32 + delta).clamp(0, 150) as u32;
+        self.mpv.set_volume(self.volume);
     }
 
     pub fn load(&mut self, track: PathBuf) {
