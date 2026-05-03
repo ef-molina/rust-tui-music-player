@@ -86,7 +86,7 @@ fn truncate_status_url(url: &str) -> String {
 
 /// Download a URL (single track or full playlist) with progress streaming.
 /// Designed to run in a background thread; sends `JobResult` messages via `tx`.
-fn spawn_playlist_download(url: String, staging: PathBuf, browser: String, tx: Sender<JobResult>) {
+fn spawn_playlist_download(url: String, title: String, staging: PathBuf, browser: String, tx: Sender<JobResult>) {
     use std::io::{BufRead, BufReader};
 
     // Use a per-job subdirectory so concurrent downloads don't clobber each other
@@ -101,8 +101,6 @@ fn spawn_playlist_download(url: String, staging: PathBuf, browser: String, tx: S
     let staging = job_dir;
     let _ = std::fs::create_dir_all(&staging);
     let output_template = staging.join("%(title)s [%(id)s].%(ext)s");
-
-    let _ = tx.send(JobResult::DownloadStarted { url: url.clone() });
 
     let mut child = match std::process::Command::new("yt-dlp")
         .args([
@@ -134,6 +132,13 @@ fn spawn_playlist_download(url: String, staging: PathBuf, browser: String, tx: S
             return;
         }
     };
+
+    // Emit started now that we have a PID
+    let _ = tx.send(JobResult::DownloadStarted {
+        url: url.clone(),
+        title: title.clone(),
+        pid: child.id(),
+    });
 
     let stdout = child.stdout.take().expect("stdout piped");
     let reader = BufReader::new(stdout);
@@ -915,20 +920,44 @@ fn handle_tick(app: &mut AppState) {
 
     if let Ok(job) = app.jobs_rx.try_recv() {
         match job {
-            JobResult::DownloadStarted { url } => {
+            JobResult::DownloadStarted { url, title, pid } => {
                 app.active_download_url = Some(url.clone());
+                app.active_download_pid = Some(pid);
                 app.set_status(
                     StatusLevel::Info,
                     format!("Downloading: {}", truncate_status_url(&url)),
                     None,
                 );
-                tracing::info!(url = %url, "Download job started");
+                // Add to queue (cap at 20)
+                app.download_jobs.push(crate::app::DownloadJob {
+                    title,
+                    url: url.clone(),
+                    status: crate::app::DownloadJobStatus::Active,
+                });
+                if app.download_jobs.len() > 20 {
+                    app.download_jobs.remove(0);
+                }
+                tracing::info!(url = %url, pid, "Download job started");
+            }
+
+            JobResult::DownloadCancelled { url } => {
+                app.active_download_url = None;
+                app.active_download = None;
+                app.active_download_pid = None;
+                if let Some(job) = app.download_jobs.iter_mut().find(|j| j.url == url) {
+                    job.status = crate::app::DownloadJobStatus::Cancelled;
+                }
+                app.set_status(StatusLevel::Warning, "Download cancelled".to_string(), Some(300));
             }
             JobResult::DownloadFinished { url, temp_path } => {
                 app.active_download_url = None;
-                // Only clear the progress bar on the final track (url is empty for intermediate ones)
                 if !url.is_empty() {
                     app.active_download = None;
+                    app.active_download_pid = None;
+                    // Mark job done in queue
+                    if let Some(job) = app.download_jobs.iter_mut().find(|j| j.url == url) {
+                        job.status = crate::app::DownloadJobStatus::Done;
+                    }
                 }
                 tracing::info!(
                     url = %url,
@@ -1022,6 +1051,10 @@ fn handle_tick(app: &mut AppState) {
             JobResult::DownloadFailed { url, error } => {
                 app.active_download_url = None;
                 app.active_download = None;
+                app.active_download_pid = None;
+                if let Some(job) = app.download_jobs.iter_mut().find(|j| j.url == url) {
+                    job.status = crate::app::DownloadJobStatus::Failed(error.clone());
+                }
                 app.set_status(
                     StatusLevel::Error,
                     format!("Download failed: {} ({error})", truncate_status_url(&url)),
@@ -1196,8 +1229,9 @@ fn run_app() -> std::io::Result<()> {
                                     let tx = app.jobs_tx.clone();
                                     let staging = download_staging_dir();
                                     let browser = app.browser.clone();
+                                    let title = truncate_status_url(&url);
                                     std::thread::spawn(move || {
-                                        spawn_playlist_download(url, staging, browser, tx);
+                                        spawn_playlist_download(url, title, staging, browser, tx);
                                     });
 
                                     close_command_mode = true;
@@ -1577,8 +1611,9 @@ fn run_app() -> std::io::Result<()> {
                                     let tx = app.jobs_tx.clone();
                                     let staging = download_staging_dir();
                                     let browser = app.browser.clone();
+                                    let dl_title = title.clone();
                                     std::thread::spawn(move || {
-                                        spawn_playlist_download(url, staging, browser, tx);
+                                        spawn_playlist_download(url, dl_title, staging, browser, tx);
                                     });
                                     app.focus = FocusPane::Browser;
                                 }
@@ -1628,6 +1663,27 @@ fn run_app() -> std::io::Result<()> {
                         );
                     }
 
+                    AppEvent::ToggleDownloadQueue => {
+                        app.show_download_queue = !app.show_download_queue;
+                    }
+
+                    AppEvent::CancelDownload => {
+                        if let Some(pid) = app.active_download_pid {
+                            // Kill the yt-dlp process
+                            let _ = std::process::Command::new("kill")
+                                .args(["-TERM", &pid.to_string()])
+                                .status();
+                            let url = app.active_download_url.clone().unwrap_or_default();
+                            app.active_download_url = None;
+                            app.active_download = None;
+                            app.active_download_pid = None;
+                            if let Some(job) = app.download_jobs.iter_mut().find(|j| j.url == url) {
+                                job.status = crate::app::DownloadJobStatus::Cancelled;
+                            }
+                            app.set_status(StatusLevel::Warning, "Download cancelled".to_string(), Some(300));
+                        }
+                    }
+
                     // Ignore command-mode events in normal mode
                     AppEvent::ExitCommandMode
                     | AppEvent::CommandChar(_)
@@ -1645,7 +1701,9 @@ fn run_app() -> std::io::Result<()> {
                     | AppEvent::SearchMoveDown
                     | AppEvent::SearchActivate
                     | AppEvent::ToggleRepeat
-                    | AppEvent::ToggleShuffle => {}
+                    | AppEvent::ToggleShuffle
+                    | AppEvent::ToggleDownloadQueue
+                    | AppEvent::CancelDownload => {}
                 }
             }
         }

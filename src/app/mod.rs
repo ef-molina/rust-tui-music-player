@@ -161,6 +161,21 @@ pub enum InputMode {
     Search,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DownloadJobStatus {
+    Active,
+    Done,
+    Failed(String),
+    Cancelled,
+}
+
+#[derive(Debug, Clone)]
+pub struct DownloadJob {
+    pub title: String,
+    pub url: String,
+    pub status: DownloadJobStatus,
+}
+
 #[derive(Debug, Clone)]
 pub struct DownloadState {
     pub track_title: String,
@@ -253,6 +268,15 @@ pub struct AppState {
 
     /// Live download progress shown in the footer
     pub active_download: Option<DownloadState>,
+
+    /// PID of the active yt-dlp process (used for cancellation)
+    pub active_download_pid: Option<u32>,
+
+    /// Rolling history of all download jobs (capped at 20)
+    pub download_jobs: Vec<DownloadJob>,
+
+    /// Whether the download queue overlay is visible
+    pub show_download_queue: bool,
 
     /// Bounded history of previous navigation states
     pub navigation_history: Vec<NavigationState>,
@@ -347,6 +371,9 @@ impl AppState {
             status_message: None,
             active_download_url: None,
             active_download: None,
+            active_download_pid: None,
+            download_jobs: Vec::new(),
+            show_download_queue: false,
             navigation_history: Vec::new(),
             youtube_results: Vec::new(),
             youtube_selected: 0,
