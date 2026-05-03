@@ -40,6 +40,8 @@ pub enum AppEvent {
     ToggleShuffle,
     VolumeUp,
     VolumeDown,
+    ToggleDownloadQueue,
+    CancelDownload,
 
     /// Switch focus to diffent panes.
     FocusBrowser,

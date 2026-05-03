@@ -7,6 +7,14 @@ use std::path::PathBuf;
 pub enum JobResult {
     DownloadStarted {
         url: String,
+        /// Title shown in the queue (best-effort from the URL or result title)
+        title: String,
+        /// yt-dlp process ID — used to cancel by killing the process
+        pid: u32,
+    },
+
+    DownloadCancelled {
+        url: String,
     },
 
     DownloadProgress {
