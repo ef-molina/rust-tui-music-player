@@ -6,7 +6,50 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ---
 
-## [v0.1.1] – Unreleased
+## [v0.2.0] – 2026-05-02
+
+### Added
+
+#### YouTube Music Integration
+
+- Artist, album, and song search via YouTube Music using `:sa`, `:salb`, and `:ss`
+  commands (full-word aliases: `artistsearch`, `albumsearch`, `songsearch`)
+- Results paginate in groups of 20 with a navigable "Load more" row
+- Each result shows a kind badge (♪ song / ▣ album / ◉ artist) for clarity
+- Selecting an album result downloads all tracks individually as separate files
+- Selecting a song result downloads and normalizes a single track
+- Real-time download progress shown in the status bar: track title, position in
+  album (e.g. 3/12), and overall percentage bar
+
+#### Download & Normalization
+
+- Deterministic library layout: `Artist/Year - Album/Title.opus`
+- Primary artist extracted from YouTube Music comment metadata so collaborative
+  albums stay in one folder (e.g. a Dr. Dre album with 20 different featured
+  artists no longer creates 20 separate directories)
+- Each track in a multi-track album is individually normalized and indexed
+- Per-job staging subdirectory prevents concurrent downloads interfering with
+  each other
+- Browser and album pane refresh automatically when downloaded tracks land in
+  the currently viewed directory
+
+#### Command Bar
+
+- Pressing Enter on a partial command (e.g. `d`) autofills the top suggestion
+  (`download `) instead of submitting unknown
+- Active command name shown as a badge in the command bar title once a command
+  is recognized
+- Unknown and incomplete commands show a warning status instead of silently failing
+
+### Fixed
+
+- Unicode-safe middle truncation no longer panics on multibyte (non-ASCII) filenames
+- Multi-track album downloads now save all tracks, not just the last one written
+  to the staging directory
+
+---
+
+## [v0.1.1] – 2026-04-15
 
 ### Added
 
@@ -40,18 +83,6 @@ This project follows [Semantic Versioning](https://semver.org/).
 - Slower, more readable marquee timing for long labels
 - Unicode-safe text truncation in the UI to avoid crashes on multibyte characters
 - Consistent pane styling, counts in pane titles, and richer search result presentation
-
-### Planned
-
-- Optional persistent lyrics cache (e.g. `~/.cache/rust-tui-music-player`)
-- User-configurable controls for automatic lyrics downloading/writing
-- Improvements to album and directory name filtering
-- Responsive layout improvements for smaller terminal sizes
-- Richer metadata density in browser/track/search rows
-- Internal robustness and bug fixes identified after v0.1.0 release
-
-This release focuses on polish, correctness, and addressing known limitations
-before wider distribution.
 
 ---
 
