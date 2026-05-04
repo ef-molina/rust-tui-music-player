@@ -45,6 +45,7 @@ pub enum TrackKind {
 /// This struct describes the *final, canonical* interpretation
 /// of the track after metadata normalization.
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct NormalizedTrack {
     pub artist: String,
     pub album: Option<String>,
@@ -205,15 +206,10 @@ fn normalize_artist(comment: Option<&str>, raw: &str, title: &str) -> (String, V
     // Handles "Dr. Dre, Hittman, Snoop Dogg" → "Dr. Dre".
     // The convention in music metadata is that the primary artist is listed first.
     let raw = raw.trim();
-    if let Some(primary) = raw
-        .split(',')
-        .next()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
+    if let Some(primary) = raw.split(',').next().map(str::trim).filter(|s| !s.is_empty())
+        && !primary.ends_with("Music")
     {
-        if !primary.ends_with("Music") {
-            return (primary.to_string(), Vec::new());
-        }
+        return (primary.to_string(), Vec::new());
     }
 
     // Priority 3: Generic YouTube channel placeholder — derive from title instead.
@@ -300,7 +296,7 @@ fn extract_features(title: &str, keyword: &str) -> Option<(String, Vec<String>)>
 }
 
 fn split_artists(s: &str) -> Vec<String> {
-    s.split(|c| c == ',' || c == '&')
+    s.split([',', '&'])
         .map(|a| a.trim())
         .filter(|a| !a.is_empty())
         .map(|a| a.to_string())
@@ -347,6 +343,7 @@ fn dedup(list: Vec<String>) -> Vec<String> {
     out
 }
 
+#[allow(clippy::too_many_arguments)]
 fn compute_destination_path(
     library_root: &Path,
     artist: &str,

@@ -4,6 +4,8 @@ pub struct TrackMetadata {
     pub artist: String,
     /// Album-level artist — set when multiple performers appear on individual tracks
     /// but the album belongs to a single primary artist (e.g. YouTube Music embeds this).
+    /// Read by the normalization pipeline; not needed elsewhere.
+    #[allow(dead_code)]
     pub album_artist: Option<String>,
     pub album: Option<String>,
     pub duration_secs: f64,
