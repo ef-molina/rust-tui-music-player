@@ -107,11 +107,6 @@ pub fn active_command_spec(buffer: &str) -> Option<&'static CommandSpec> {
 pub fn parse_command(input: &str) -> Command {
     let input = input.trim();
 
-    // Try each prefix in order — longer prefixes first to avoid mis-matching
-    for (prefix, builder) in &[("download ", Command::Download { url: String::new() })] {
-        let _ = (prefix, builder);
-    }
-
     if let Some(rest) = input.strip_prefix("download ") {
         let v = rest.trim();
         if !v.is_empty() {
