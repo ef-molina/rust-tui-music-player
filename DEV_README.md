@@ -6,13 +6,12 @@
 
 **rust-tui-music-player** is a terminal-based music player built in Rust with a focus on:
 
-- **Filesystem as source of truth** — no database, no indexing
+- **Filesystem as source of truth** — no database, no indexing required for local playback
 - **Deterministic state management** — single-owner event loop pattern
-- **Non-blocking UI** — all potentially long-running I/O (network, IPC) happens off the main thread; filesystem operations are scoped and bounded
+- **Non-blocking UI** — all potentially long-running I/O (network, downloads, library indexing) happens on background threads; the main thread only processes events
 - **Time-synced lyrics** — local-first `.lrc` files with background network fallback
-- **Clean separation of concerns** — UI, state, events, input, and player are strictly decoupled
-
-This is a developer-focused project emphasizing maintainability, debuggability, and architectural clarity over feature completeness.
+- **YouTube Music integration** — search, download, and normalize tracks via yt-dlp
+- **Clean separation of concerns** — UI, state, events, input, player, and downloads are strictly decoupled
 
 ---
 
@@ -20,29 +19,21 @@ This is a developer-focused project emphasizing maintainability, debuggability, 
 
 ### Rust Toolchain
 
-- **Rust 1.70+**
-- The codebase assumes Rust 2021 semantics  
-  (`Cargo.toml` currently specifies `edition = "2024"` and should be aligned intentionally)
+- **Rust 1.70+** with `edition = "2024"` in `Cargo.toml`
 - Standard toolchain via `rustup`
 
 ### External Dependencies (Runtime)
 
 These must be installed and available in `$PATH`:
 
-- **mpv** — audio playback via JSON IPC over Unix sockets
-  - macOS: `brew install mpv`
-  - Linux: `apt install mpv` or equivalent
-  - Verify: `mpv --version`
+| Tool        | Purpose                                    | Install (macOS)            |
+| ----------- | ------------------------------------------ | -------------------------- |
+| **mpv**     | Audio playback via JSON IPC Unix socket    | `brew install mpv`         |
+| **yt-dlp**  | YouTube Music search and download          | `brew install yt-dlp`      |
+| **ffprobe** | Primary metadata extraction (part of ffmpeg) | `brew install ffmpeg`    |
+| **exiftool**| Fallback metadata extraction (optional)    | `brew install exiftool`    |
 
-- **ffprobe** (part of ffmpeg) — primary metadata extraction
-  - macOS: `brew install ffmpeg`
-  - Linux: `apt install ffmpeg`
-  - Verify: `ffprobe -version`
-
-- **exiftool** (optional) — fallback metadata extraction
-  - macOS: `brew install exiftool`
-  - Linux: `apt install libimage-exiftool-perl`
-  - Verify: `exiftool -ver`
+The app checks for `mpv` and `yt-dlp` at startup and exits with a clear error if either is missing.
 
 ### OS Compatibility
 
@@ -54,51 +45,35 @@ These must be installed and available in `$PATH`:
 
 ## 3. Quickstart
 
-### Build and Run
-
 ```bash
 git clone <repo-url>
 cd rust-tui-music-player
-
-cargo build --release
-cargo run --release
-
-# Or directly in dev mode
 cargo run
 ```
 
 ### Environment Variables
 
 ```bash
-RUST_LOG=trace cargo run
+# Logs are written to ./debug.log — never to stdout/stderr
 RUST_LOG=debug cargo run
-
-# Logs are written to ./debug.log (NOT terminal)
+RUST_LOG=trace cargo run
 tail -f debug.log
 ```
 
-### Default Music Directory
+### Configuration
 
-The app defaults to `$HOME/Downloads/Media/Music`.
-This is intentionally hardcoded during early development to reduce configuration complexity while core architecture stabilizes.
+Copy `config.example.toml` to `~/.config/rust-tui-music-player/config.toml`. All fields are optional:
 
-```rust
-let root_dir = PathBuf::from(
-    std::env::var("HOME")
-        .map(|h| format!("{}/Downloads/Media/Music", h))
-        .unwrap_or_else(|_| ".".into()),
-);
+```toml
+music_root = "~/Downloads/Media/Music"   # library root
+browser    = "brave"                      # yt-dlp cookie source
 ```
-
-To use a different directory, modify this path and rebuild.
 
 ---
 
 ## 4. Architecture Overview
 
 ### Event-Driven State Machine
-
-The application follows a strict **synchronous event loop** pattern:
 
 ```
 Input Polling → Event Translation → State Mutation → UI Render
@@ -111,155 +86,191 @@ Input Polling → Event Translation → State Mutation → UI Render
 All mutable application state lives in `AppState` (`app/mod.rs`).
 The event loop in `main.rs` is the **only** code that mutates `AppState`.
 
-- **UI module**: read-only access, pure rendering
-- **Input module**: stateless translation from keyboard to `AppEvent`
-- **Player module**: encapsulates mpv state, but does not mutate `AppState`
+- **UI module** — read-only access, pure rendering, no side effects
+- **Input module** — stateless translation from keyboard to `AppEvent`
+- **Player module** — encapsulates mpv state but does not mutate `AppState`
+- **Background threads** — communicate results back via `std::sync::mpsc` channels
 
 ---
 
 ### Concurrency Model
 
-| Thread                  | Responsibility                                         | Blocking?                                 |
-| ----------------------- | ------------------------------------------------------ | ----------------------------------------- |
-| **Main thread**         | Event loop, state mutations, UI rendering, mpv polling | No — uses non-blocking `poll_event(10ms)` |
-| **Lyrics fetch worker** | HTTP requests with bounded timeouts                    | Yes — isolated from UI                    |
+| Thread                     | Responsibility                                    | Blocking? |
+| -------------------------- | ------------------------------------------------- | --------- |
+| **Main thread**            | Event loop, state mutations, UI rendering         | No — 10ms poll |
+| **Lyrics fetch worker**    | HTTP to lrclib with bounded timeouts              | Yes — isolated |
+| **Library indexer**        | Recursive directory scan + metadata enrichment    | Yes — isolated |
+| **YouTube search worker**  | yt-dlp flat-playlist JSON fetch                   | Yes — isolated |
+| **Download worker**        | yt-dlp subprocess + stdout progress streaming     | Yes — isolated |
+| **Album detail workers**   | Parallel yt-dlp fetches to resolve album titles   | Yes — isolated |
 
-**Critical invariant**:
-The main thread never blocks on network or IPC I/O.
-
-Filesystem operations are synchronous but intentionally scoped to small, bounded operations.
-
----
-
-### mpv Integration
-
-- mpv is spawned as a child process on startup with
-  `--input-ipc-server=/tmp/rust-tui-mpv.sock`
-- Communication occurs via JSON IPC over a Unix socket
-- Commands: `loadfile`, `set_property pause`, `seek`, `stop`, `quit`
-- Queries: `get_property time-pos`, `get_property duration`
-- Polling strategy: every 10ms tick (tunable; favors responsiveness over efficiency)
+**Critical invariant**: The main thread never blocks on network, subprocess, or disk I/O beyond small bounded filesystem operations.
 
 ---
 
 ## 5. Module Map
 
-### app/mod.rs — Application State
+### `app/mod.rs` — Application State
 
 **Purpose**: Define `AppState`, the single owner of all mutable state.
 
 **Key types**:
-
 - `AppState`
-- `BrowserEntry { name: String, is_dir: bool }`
-- `FocusPane` — `Browser | Album | Lyrics`
-- `LyricsStatus` — `None | Loading | Loaded(LyricsState)`
+- `BrowserEntry`, `FocusPane`, `LyricsStatus`
+- `RepeatMode` — `Off | Track | Album`
+- `DownloadJob`, `DownloadJobStatus` — download queue entries
+- `DownloadState` — live progress shown in status bar
+- `SearchState` — local library search query and results
+- `InputMode` — `Normal | Command | Search`
 
-**Invariants**:
-
-- No I/O operations
-- No UI logic
-- Only the event loop mutates this struct
-
----
-
-### event/mod.rs — Semantic Events
-
-**Purpose**: Define `AppEvent` enum — abstract representation of all application actions.
-
-**Design principle**: Events are semantic and input-agnostic.
+**Invariants**: no I/O, no UI logic, only the event loop mutates this struct.
 
 ---
 
-### input/mod.rs — Input Handling
+### `config/mod.rs` — User Configuration
 
-**Purpose**: Poll terminal input and translate raw key events into `AppEvent`s.
+**Purpose**: Load `~/.config/rust-tui-music-player/config.toml` at startup.
 
-```rust
-pub fn poll_event(timeout: Duration) -> io::Result<Option<AppEvent>>
-```
+**Fields**: `music_root: String`, `browser: String`
 
----
-
-### ui/mod.rs — UI Rendering
-
-**Purpose**: Pure rendering using `ratatui`.
-
-**Invariants**:
-
-- Read-only access to `AppState`
-- No logging to terminal
-- No state mutation
+Falls back to built-in defaults when the file is absent or malformed. A warning is printed to stderr (before raw mode) on parse error.
 
 ---
 
-### player/mod.rs + mpv.rs — Playback Control
+### `event/mod.rs` — Semantic Events
 
-**Purpose**: Manage mpv subprocess and IPC.
+**Purpose**: Define `AppEvent` — abstract representation of all application actions, input-agnostic.
 
-**Known limitations**:
-
-- Hardcoded socket path
-- Stale socket on crash
-- Silent failure if mpv is missing
+Includes: navigation, playback, volume, repeat/shuffle, search, command mode, YouTube results, download queue/cancel.
 
 ---
 
-### fs/mod.rs — Filesystem Operations
+### `event/commands.rs` — Command Parsing
+
+**Purpose**: Parse and autocomplete `:command` input.
+
+**Commands**: `download <url>`, `ss <song>`, `salb <album>`, `sa <artist>`
+
+`filtered_command_specs(query)` powers the inline command helper. `parse_command(input)` returns a typed `Command` variant.
+
+---
+
+### `event/jobs.rs` — Background Job Results
+
+**Purpose**: Messages sent from worker threads back to the main event loop via `jobs_rx`.
+
+**Variants**: `DownloadStarted` (with PID), `DownloadProgress`, `DownloadFinished`, `DownloadFailed`, `DownloadCancelled`, `YoutubeSearchDone`, `YoutubeSearchFailed`
+
+---
+
+### `input/mod.rs` — Input Handling
+
+**Purpose**: Poll terminal input and translate raw key events into `AppEvent`s. Behaviour changes based on `InputMode`.
+
+---
+
+### `ui/mod.rs` — UI Rendering
+
+**Purpose**: Pure rendering using `ratatui`. Read-only access to `AppState`.
+
+**Invariants**: no logging to terminal, no state mutation, no side effects.
+
+---
+
+### `player/mod.rs` + `mpv.rs` — Playback Control
+
+**Purpose**: Manage the mpv subprocess and JSON IPC.
+
+**Interface**: `load(path)`, `toggle_pause()`, `seek(seconds)`, `stop()`, `adjust_volume(delta)`, `shutdown()`
+
+Volume is stored in `Player.volume` (0–150) and synced to mpv via `set_property volume`.
+
+**Known limitation**: hardcoded socket path `/tmp/rust-tui-mpv.sock`; stale socket on crash.
+
+---
+
+### `fs/mod.rs` — Filesystem Operations
 
 **Purpose**: Directory scanning and album detection.
 
-**Album detection rules**:
-
-- Leaf album: audio files + no subdirectories
-- Loose tracks: audio files allowed with subdirectories
-
----
-
-### metadata/ — Metadata Extraction
-
-**Purpose**: ffprobe primary, exiftool fallback.
-
-**Lyrics gate**:
-Only complete metadata triggers lyrics fetching.
+**`fs/normalize.rs`** — Download normalization pipeline:
+- Reads embedded metadata via ffprobe
+- Classifies track kind (AutoGeneratedAlbum, OfficialAudioSingle, OfficialVideo, CreatorUpload)
+- Extracts primary artist from YouTube Music comment `·` format
+- Moves file to canonical path: `{library}/{Artist}/{Year} - {Album}/{Title}.opus`
+- Writes clean tags via exiftool
 
 ---
 
-### lyrics/ — Lyrics Parsing & State
+### `metadata/` — Metadata Extraction
+
+**Purpose**: ffprobe primary, exiftool fallback. Produces `TrackMetadata` including `album_artist` which is used to determine the library folder.
+
+---
+
+### `lyrics/` — Lyrics Parsing & State
 
 **Purpose**: Parse `.lrc` files and sync lyric lines to playback time.
 
 ---
 
-### lyrics_fetch/ — Network Lyrics
+### `lyrics_fetch/` — Network Lyrics
 
-**Purpose**: Background lyrics fetch via lrclib.net.
-
-**Behavior**:
-
-- Tiered lookup strategy:
-  1. Title + artist + duration + album
-  2. Title + artist + duration
-  3. Canonical single fallback
-
-- Blocking HTTP requests executed on a worker thread
-- Explicit network timeouts (connect + read)
-- Results guarded by a monotonically increasing request ID to prevent stale fetch results from applying after rapid track changes
-- Atomic write: `.lrc.tmp` → `.lrc` when committing lyrics
-
-A failed fetch is terminal for the current track activation; retries occur only on subsequent activations.
-
-**Known limitations**:
-
-- No active cancellation of in-flight fetches (stale results are safely ignored)
-- No negative cache for repeated fetch failures
-- Orphaned `.lrc.tmp` files possible on crash
+**Purpose**: Background lyrics fetch via lrclib.net with tiered lookup and stale-result protection.
 
 ---
 
-## 6. Logging & Debugging
+### `search/mod.rs` — Local Library Search
 
-**Critical constraint**: Logging must **never** write to stdout/stderr.
+**Purpose**: Background indexer that walks the library directory and enriches entries with metadata. Results are filtered in real-time as the user types.
+
+**Messages**: `Batch`, `EnrichedBatch`, `Upsert`, `Finished`, `Failed`
+
+`Upsert` is sent after a successful download normalization so new tracks appear without restarting the indexer.
+
+---
+
+### `youtube/mod.rs` — YouTube Music Search
+
+**Purpose**: Wraps yt-dlp to search YouTube Music for songs, albums, and artists.
+
+**Public API**:
+- `search_songs(query, page, browser)` — YouTube Music search filtered to `watch?v=` URLs
+- `search_albums(query, page, browser)` — fetches MPREb_* and VL* entries in parallel to resolve titles
+- `search_artists(query, page, browser)` — fetches UC* channel pages in parallel to resolve artist names
+
+All functions are synchronous and designed to run on a background thread. Browser name is passed from config rather than hardcoded.
+
+---
+
+## 6. Download Pipeline
+
+```
+:salb Pink Floyd
+    → spawn_youtube_search (background thread)
+        → yt-dlp --flat-playlist (search)
+        → parallel fetch per MPREb_/VL* entry to resolve titles
+    → YoutubeSearchDone → populate results pane
+
+Enter on result
+    → spawn_playlist_download (background thread)
+        → yt-dlp (download all tracks to per-job staging subdir)
+        → DownloadStarted (with PID, for cancellation)
+        → DownloadProgress (per [download] line from stdout)
+        → DownloadFinished × N (one per file)
+        → staging dir removed
+
+DownloadFinished (main thread)
+    → normalize_downloaded_track (move + rename + write tags)
+    → spawn_index_update (upsert into search index)
+    → browser/album pane refreshed if current dir matches
+```
+
+---
+
+## 7. Logging & Debugging
+
+**Critical constraint**: Logging must **never** write to stdout/stderr during the TUI session.
 
 ```rust
 let log_file = File::create("debug.log")?;
@@ -269,82 +280,72 @@ tracing_subscriber::fmt()
     .init();
 ```
 
-Structured logging is used to enable postmortem debugging without impacting UI responsiveness.
-
-Use:
-
 ```bash
 RUST_LOG=debug cargo run
-RUST_LOG=trace cargo run
+tail -f debug.log
 ```
 
 ---
 
-## 7. Testing & Verification
+## 8. Testing
 
-**Automated tests**: None currently.
+The project has **55 automated unit tests** covering:
 
-**Manual testing recommended**:
+- Lyrics parsing and synchronization (`lyrics/`)
+- LRC file loading and edge cases (`lyrics/loader.rs`)
+- Download normalization pipeline (`fs/normalize.rs`)
+- YouTube JSON entry parsing (`youtube/mod.rs`)
+- Command parsing and autocomplete (`event/commands.rs`)
+- Navigation history (`main.rs`)
+- UI helpers (`ui/mod.rs`)
 
-- Navigation responsiveness
-- Lyrics fetch success/failure
-- Album persistence
+```bash
+cargo test
+```
+
+Manual testing is still recommended for:
+- Full download → normalize → playback flow
+- YouTube search result navigation
 - mpv cleanup on quit
-- Metadata fallback behavior
+- yt-dlp cookie authentication across browsers
 
 ---
 
-## 8. Known Limitations & Tech Debt
+## 9. Known Limitations & Tech Debt
 
-### Critical
+### Active
 
-- Hardcoded mpv socket path
-- Stale socket on crash
-- Rust edition mismatch (2021 semantics vs 2024 declaration)
-
-### High Priority
-
-- No active cancellation for in-flight lyrics fetches (results are intentionally handled instead)
-- Silent mpv IPC failures
-- Hardcoded music root directory
-
-### Medium / Low
-
-- Aggressive metrics polling (10ms)
-- No active cancellation of in-flight fetches (stale results are safely handled)
+- Hardcoded mpv socket path (`/tmp/rust-tui-mpv.sock`) — stale on crash
+- Single mpv instance shared across all playback
+- No active cancellation of in-flight lyrics fetches (stale results are safely ignored)
 - Orphaned `.lrc.tmp` files possible on crash
-- No dependency validation
-- No UI error reporting
 
-**Implemented behavior**:
+### Resolved in recent releases
 
-- In-flight lyrics fetches are not cancelled when switching tracks
-- Successful fetches always write `.lrc` sidecar files, even if the user navigates away
-- Stale fetch results never update UI state, but are persisted for future playback
-- Failed fetches are recorded in an in-memory negative cache to avoid repeated network requests
+- ~~Hardcoded music root directory~~ — configurable via `config.toml` (v0.3.0)
+- ~~No shuffle or repeat~~ — added in v0.3.0
+- ~~No volume control~~ — added in v0.3.0
+- ~~No download queue visibility~~ — added in v0.3.0
 
 ---
 
-## 9. Roadmap
+## 10. Roadmap
 
 ### Near-Term
 
-- Optional persistence for lyrics cache (disk-level reuse)
+- Optional persistent lyrics cache (disk-level reuse across sessions)
 - User-configurable control over automatic lyrics downloading
-- mpv socket lifecycle fixes
+- mpv socket lifecycle improvements (crash recovery)
 
 ### Medium-Term
 
-- Central disk cache for opportunistic lyrics reuse
-- Configurable music directory
-- Dependency validation
+- Metadata-driven browsing and display
 - Best-effort lyrics fetch cancellation
 
 ### Long-Term
 
 - Windows support
-- Automated tests
-- Performance tuning
+- Responsive layout for small terminal sizes
 
 ---
 
@@ -352,14 +353,22 @@ RUST_LOG=trace cargo run
 
 ```
 src/
-├── main.rs
-├── app/
+├── main.rs              # Event loop, startup, download orchestration
+├── app/                 # AppState and all mutable state types
+├── config/              # Config file loading (config.toml)
 ├── event/
-├── input/
-├── ui/
-├── player/
+│   ├── mod.rs           # AppEvent enum
+│   ├── commands.rs      # Command parsing and autocomplete
+│   └── jobs.rs          # Background job result types
+├── input/               # Keyboard → AppEvent translation
+├── ui/                  # Pure rendering (ratatui)
+├── player/              # mpv subprocess and IPC
 ├── fs/
-├── metadata/
-├── lyrics/
-└── lyrics_fetch/
+│   ├── mod.rs           # Directory scanning and album detection
+│   └── normalize.rs     # Download normalization pipeline
+├── metadata/            # ffprobe + exiftool metadata extraction
+├── lyrics/              # LRC parsing and time-sync state
+├── lyrics_fetch/        # Background lyrics fetch (lrclib)
+├── search/              # Background library indexer
+└── youtube/             # YouTube Music search (yt-dlp wrapper)
 ```

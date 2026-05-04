@@ -101,11 +101,7 @@ pub fn normalize_downloaded_track(
 
     // unimplemented!("classification complete: kind={kind:?}, track={track_number:?}, year={year:?}");
     let comment_text = meta.comment.as_deref().or(meta.synopsis.as_deref());
-    let (artist, mut featured_artists) = normalize_artist(
-        comment_text,
-        &meta.artist,
-        &meta.title,
-    );
+    let (artist, mut featured_artists) = normalize_artist(comment_text, &meta.artist, &meta.title);
     let (title, title_features) = normalize_title_and_features(&meta.title);
     featured_artists.extend(title_features);
 
@@ -209,7 +205,12 @@ fn normalize_artist(comment: Option<&str>, raw: &str, title: &str) -> (String, V
     // Handles "Dr. Dre, Hittman, Snoop Dogg" → "Dr. Dre".
     // The convention in music metadata is that the primary artist is listed first.
     let raw = raw.trim();
-    if let Some(primary) = raw.split(',').next().map(str::trim).filter(|s| !s.is_empty()) {
+    if let Some(primary) = raw
+        .split(',')
+        .next()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
         if !primary.ends_with("Music") {
             return (primary.to_string(), Vec::new());
         }
@@ -465,11 +466,7 @@ mod tests {
 
     #[test]
     fn falls_back_to_first_comma_split_when_no_comment() {
-        let (artist, _) = normalize_artist(
-            None,
-            "Jay Electronica, The-Dream",
-            "Shiny Suit Theory",
-        );
+        let (artist, _) = normalize_artist(None, "Jay Electronica, The-Dream", "Shiny Suit Theory");
         assert_eq!(artist, "Jay Electronica");
     }
 
@@ -489,7 +486,8 @@ mod tests {
         //
         // Later we’ll add metadata injection helpers if needed.
 
-        let meta = crate::metadata::model::TrackMetadata { album_artist: None,
+        let meta = crate::metadata::model::TrackMetadata {
+            album_artist: None,
             title: "EdEddnEddy".into(),
             artist: "JID".into(),
             album: Some("The Never Story".into()),
@@ -510,7 +508,8 @@ mod tests {
 
     #[test]
     fn classify_official_audio_single() {
-        let meta = crate::metadata::model::TrackMetadata { album_artist: None,
+        let meta = crate::metadata::model::TrackMetadata {
+            album_artist: None,
             title: "Some Song (Official Audio)".into(),
             artist: "Artist".into(),
             album: None,
@@ -529,7 +528,8 @@ mod tests {
 
     #[test]
     fn classify_creator_upload_fallback() {
-        let meta = crate::metadata::model::TrackMetadata { album_artist: None,
+        let meta = crate::metadata::model::TrackMetadata {
+            album_artist: None,
             title: "random upload".into(),
             artist: "someone".into(),
             album: None,
@@ -650,7 +650,8 @@ mod tests {
         fs::write(&src_file, b"test audio").unwrap();
 
         // Minimal metadata stub
-        let meta = crate::metadata::model::TrackMetadata { album_artist: None,
+        let meta = crate::metadata::model::TrackMetadata {
+            album_artist: None,
             title: "Fuel (feat. JID)".into(),
             artist: "Eminem".into(),
             album: None,

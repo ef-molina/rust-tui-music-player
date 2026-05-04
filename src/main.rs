@@ -86,7 +86,13 @@ fn truncate_status_url(url: &str) -> String {
 
 /// Download a URL (single track or full playlist) with progress streaming.
 /// Designed to run in a background thread; sends `JobResult` messages via `tx`.
-fn spawn_playlist_download(url: String, title: String, staging: PathBuf, browser: String, tx: Sender<JobResult>) {
+fn spawn_playlist_download(
+    url: String,
+    title: String,
+    staging: PathBuf,
+    browser: String,
+    tx: Sender<JobResult>,
+) {
     use std::io::{BufRead, BufReader};
 
     // Use a per-job subdirectory so concurrent downloads don't clobber each other
@@ -104,17 +110,22 @@ fn spawn_playlist_download(url: String, title: String, staging: PathBuf, browser
 
     let mut child = match std::process::Command::new("yt-dlp")
         .args([
-            "-f", "bestaudio[ext=opus]/bestaudio",
+            "-f",
+            "bestaudio[ext=opus]/bestaudio",
             "-x",
-            "--audio-format", "opus",
-            "--audio-quality", "0",
+            "--audio-format",
+            "opus",
+            "--audio-quality",
+            "0",
             "--embed-metadata",
             "--embed-thumbnail",
-            "--convert-thumbnails", "jpg",
+            "--convert-thumbnails",
+            "jpg",
             "--add-metadata",
             "--yes-playlist",
             "--newline",
-            "--cookies-from-browser", &browser,
+            "--cookies-from-browser",
+            &browser,
             "-o",
         ])
         .arg(&output_template)
@@ -148,7 +159,9 @@ fn spawn_playlist_download(url: String, title: String, staging: PathBuf, browser
     let mut current_title = String::new();
 
     for line in reader.lines().map_while(Result::ok) {
-        let Some(rest) = line.strip_prefix("[download]") else { continue };
+        let Some(rest) = line.strip_prefix("[download]") else {
+            continue;
+        };
         let trimmed = rest.trim();
 
         // "[download] Downloading item X of Y"
@@ -170,7 +183,11 @@ fn spawn_playlist_download(url: String, title: String, staging: PathBuf, browser
             current_title = if let Some(pos) = filename.rfind(" [") {
                 filename[..pos].to_string()
             } else {
-                filename.rsplit_once('.').map(|(s, _)| s).unwrap_or(filename).to_string()
+                filename
+                    .rsplit_once('.')
+                    .map(|(s, _)| s)
+                    .unwrap_or(filename)
+                    .to_string()
             };
         }
         // "[download]  42.3% of 5.23MiB at ..."
@@ -490,9 +507,15 @@ fn spawn_youtube_search(
     let browser = app.browser.clone();
     std::thread::spawn(move || {
         let result = match kind {
-            crate::youtube::SearchKind::Song => crate::youtube::search_songs(&query, page, &browser),
-            crate::youtube::SearchKind::Album => crate::youtube::search_albums(&query, page, &browser),
-            crate::youtube::SearchKind::Artist => crate::youtube::search_artists(&query, page, &browser),
+            crate::youtube::SearchKind::Song => {
+                crate::youtube::search_songs(&query, page, &browser)
+            }
+            crate::youtube::SearchKind::Album => {
+                crate::youtube::search_albums(&query, page, &browser)
+            }
+            crate::youtube::SearchKind::Artist => {
+                crate::youtube::search_artists(&query, page, &browser)
+            }
         };
         match result {
             Ok(results) => {
@@ -631,7 +654,11 @@ fn move_cursor_right(buffer: &str, cursor: &mut usize) {
 
 fn restore_search_context(app: &mut AppState) {
     load_browser_dir(app, app.search.last_browser_dir.clone());
-    let dir_count = app.browser_entries.iter().filter(|entry| entry.is_dir).count();
+    let dir_count = app
+        .browser_entries
+        .iter()
+        .filter(|entry| entry.is_dir)
+        .count();
     app.selected_index = if dir_count == 0 {
         0
     } else {
@@ -664,7 +691,11 @@ fn push_navigation_history(app: &mut AppState) {
 fn restore_navigation_state(app: &mut AppState, state: &NavigationState) {
     load_browser_dir(app, state.current_dir.clone());
 
-    let dir_count = app.browser_entries.iter().filter(|entry| entry.is_dir).count();
+    let dir_count = app
+        .browser_entries
+        .iter()
+        .filter(|entry| entry.is_dir)
+        .count();
     app.selected_index = if dir_count == 0 {
         0
     } else {
@@ -745,11 +776,7 @@ fn jump_to_track_path(app: &mut AppState, track_path: &std::path::Path) {
         let browser_dir = track_dir.parent().unwrap_or(&app.root_dir).to_path_buf();
         load_browser_dir(app, browser_dir);
 
-        let browser_dirs: Vec<_> = app
-            .browser_entries
-            .iter()
-            .filter(|e| e.is_dir)
-            .collect();
+        let browser_dirs: Vec<_> = app.browser_entries.iter().filter(|e| e.is_dir).collect();
 
         if let Some(dir_name) = track_dir.file_name().and_then(|s| s.to_str())
             && let Some(index) = browser_dirs.iter().position(|e| e.name == dir_name)
@@ -801,7 +828,10 @@ fn handle_tick(app: &mut AppState) {
                 app.search.status = SearchStatus::Ready;
                 app.set_status(
                     StatusLevel::Success,
-                    format!("Library index ready: {} tracks", app.search.index_entries.len()),
+                    format!(
+                        "Library index ready: {} tracks",
+                        app.search.index_entries.len()
+                    ),
                     Some(500),
                 );
                 debug!(
@@ -947,7 +977,11 @@ fn handle_tick(app: &mut AppState) {
                 if let Some(job) = app.download_jobs.iter_mut().find(|j| j.url == url) {
                     job.status = crate::app::DownloadJobStatus::Cancelled;
                 }
-                app.set_status(StatusLevel::Warning, "Download cancelled".to_string(), Some(300));
+                app.set_status(
+                    StatusLevel::Warning,
+                    "Download cancelled".to_string(),
+                    Some(300),
+                );
             }
             JobResult::DownloadFinished { url, temp_path } => {
                 app.active_download_url = None;
@@ -967,10 +1001,7 @@ fn handle_tick(app: &mut AppState) {
 
                 let library_root = app.root_dir.clone();
 
-                match crate::fs::normalize::normalize_downloaded_track(
-                    &temp_path,
-                    &library_root,
-                ) {
+                match crate::fs::normalize::normalize_downloaded_track(&temp_path, &library_root) {
                     Ok(normalized) => {
                         app.set_status(
                             StatusLevel::Success,
@@ -1000,7 +1031,8 @@ fn handle_tick(app: &mut AppState) {
                             .unwrap_or(false);
 
                         if browser_stale {
-                            app.browser_entries = fs::read_dir(&app.current_dir).unwrap_or_default();
+                            app.browser_entries =
+                                fs::read_dir(&app.current_dir).unwrap_or_default();
                         }
 
                         // Refresh album pane if this track landed in the active album dir
@@ -1010,9 +1042,9 @@ fn handle_tick(app: &mut AppState) {
                             .unwrap_or(false);
 
                         if album_stale {
-                            if let Ok(Some(tracks)) = fs::detect_album(
-                                app.active_album_dir.as_deref().unwrap()
-                            ) {
+                            if let Ok(Some(tracks)) =
+                                fs::detect_album(app.active_album_dir.as_deref().unwrap())
+                            {
                                 app.album_entries = tracks;
                             }
                         }
@@ -1132,7 +1164,15 @@ fn run_app() -> std::io::Result<()> {
     let (lyrics_tx, lyrics_rx) = std::sync::mpsc::channel();
     let (search_tx, search_rx) = std::sync::mpsc::channel();
     let (jobs_tx, jobs_rx) = std::sync::mpsc::channel();
-    let mut app = AppState::new(&cfg, lyrics_rx, lyrics_tx, search_rx, search_tx.clone(), jobs_rx, jobs_tx);
+    let mut app = AppState::new(
+        &cfg,
+        lyrics_rx,
+        lyrics_tx,
+        search_rx,
+        search_tx.clone(),
+        jobs_rx,
+        jobs_tx,
+    );
     let backend = CrosstermBackend::new(stdout());
     let mut terminal = Terminal::new(backend)?;
 
@@ -1171,8 +1211,7 @@ fn run_app() -> std::io::Result<()> {
                     }
 
                     AppEvent::CommandBackspace => {
-                        if let InputMode::Command(cmd) = &mut app.input_mode
-                        {
+                        if let InputMode::Command(cmd) = &mut app.input_mode {
                             backspace_char(&mut cmd.buffer, &mut cmd.cursor);
                         }
                     }
@@ -1238,17 +1277,32 @@ fn run_app() -> std::io::Result<()> {
                                 }
 
                                 Command::SearchSong { query } => {
-                                    spawn_youtube_search(&mut app, query, crate::youtube::SearchKind::Song, 0);
+                                    spawn_youtube_search(
+                                        &mut app,
+                                        query,
+                                        crate::youtube::SearchKind::Song,
+                                        0,
+                                    );
                                     close_command_mode = true;
                                 }
 
                                 Command::SearchAlbum { query } => {
-                                    spawn_youtube_search(&mut app, query, crate::youtube::SearchKind::Album, 0);
+                                    spawn_youtube_search(
+                                        &mut app,
+                                        query,
+                                        crate::youtube::SearchKind::Album,
+                                        0,
+                                    );
                                     close_command_mode = true;
                                 }
 
                                 Command::SearchArtist { query } => {
-                                    spawn_youtube_search(&mut app, query, crate::youtube::SearchKind::Artist, 0);
+                                    spawn_youtube_search(
+                                        &mut app,
+                                        query,
+                                        crate::youtube::SearchKind::Artist,
+                                        0,
+                                    );
                                     close_command_mode = true;
                                 }
 
@@ -1595,7 +1649,9 @@ fn run_app() -> std::io::Result<()> {
                                 let kind = app.youtube_search_kind;
                                 let next_page = app.youtube_page + 1;
                                 spawn_youtube_search(&mut app, query, kind, next_page);
-                            } else if let Some(result) = app.youtube_results.get(app.youtube_selected) {
+                            } else if let Some(result) =
+                                app.youtube_results.get(app.youtube_selected)
+                            {
                                 let url = result.url.clone();
                                 let title = result.title.clone();
                                 let kind = result.kind;
@@ -1603,17 +1659,28 @@ fn run_app() -> std::io::Result<()> {
                                 if kind == crate::youtube::SearchKind::Artist {
                                     // Drill into this artist's albums rather than downloading their channel
                                     tracing::info!(artist = %title, "Browsing artist albums");
-                                    spawn_youtube_search(&mut app, title, crate::youtube::SearchKind::Album, 0);
+                                    spawn_youtube_search(
+                                        &mut app,
+                                        title,
+                                        crate::youtube::SearchKind::Album,
+                                        0,
+                                    );
                                 } else {
                                     tracing::info!(url = %url, "Queuing download from YouTube results");
                                     app.active_download_url = Some(url.clone());
-                                    app.set_status(StatusLevel::Info, format!("Downloading: {title}"), None);
+                                    app.set_status(
+                                        StatusLevel::Info,
+                                        format!("Downloading: {title}"),
+                                        None,
+                                    );
                                     let tx = app.jobs_tx.clone();
                                     let staging = download_staging_dir();
                                     let browser = app.browser.clone();
                                     let dl_title = title.clone();
                                     std::thread::spawn(move || {
-                                        spawn_playlist_download(url, dl_title, staging, browser, tx);
+                                        spawn_playlist_download(
+                                            url, dl_title, staging, browser, tx,
+                                        );
                                     });
                                     app.focus = FocusPane::Browser;
                                 }
@@ -1665,12 +1732,20 @@ fn run_app() -> std::io::Result<()> {
 
                     AppEvent::VolumeUp => {
                         app.player.adjust_volume(5);
-                        app.set_status(StatusLevel::Info, format!("Volume: {}%", app.player.volume), Some(150));
+                        app.set_status(
+                            StatusLevel::Info,
+                            format!("Volume: {}%", app.player.volume),
+                            Some(150),
+                        );
                     }
 
                     AppEvent::VolumeDown => {
                         app.player.adjust_volume(-5);
-                        app.set_status(StatusLevel::Info, format!("Volume: {}%", app.player.volume), Some(150));
+                        app.set_status(
+                            StatusLevel::Info,
+                            format!("Volume: {}%", app.player.volume),
+                            Some(150),
+                        );
                     }
 
                     AppEvent::ToggleDownloadQueue => {
@@ -1689,7 +1764,11 @@ fn run_app() -> std::io::Result<()> {
                             if let Some(job) = app.download_jobs.iter_mut().find(|j| j.url == url) {
                                 job.status = crate::app::DownloadJobStatus::Cancelled;
                             }
-                            app.set_status(StatusLevel::Warning, "Download cancelled".to_string(), Some(300));
+                            app.set_status(
+                                StatusLevel::Warning,
+                                "Download cancelled".to_string(),
+                                Some(300),
+                            );
                         }
                     }
 
@@ -1734,7 +1813,15 @@ mod tests {
         let (lyrics_tx, lyrics_rx) = channel();
         let (search_tx, search_rx) = channel();
         let (jobs_tx, jobs_rx) = channel();
-        AppState::new(&crate::config::Config::default(), lyrics_rx, lyrics_tx, search_rx, search_tx, jobs_rx, jobs_tx)
+        AppState::new(
+            &crate::config::Config::default(),
+            lyrics_rx,
+            lyrics_tx,
+            search_rx,
+            search_tx,
+            jobs_rx,
+            jobs_tx,
+        )
     }
 
     #[test]
@@ -1805,11 +1892,15 @@ mod tests {
 
         assert_eq!(app.navigation_history.len(), NAVIGATION_HISTORY_LIMIT);
         assert_eq!(
-            app.navigation_history.first().map(|state| state.current_dir.clone()),
+            app.navigation_history
+                .first()
+                .map(|state| state.current_dir.clone()),
             Some(PathBuf::from("/tmp/root/5"))
         );
         assert_eq!(
-            app.navigation_history.last().map(|state| state.current_dir.clone()),
+            app.navigation_history
+                .last()
+                .map(|state| state.current_dir.clone()),
             Some(PathBuf::from(format!(
                 "/tmp/root/{}",
                 NAVIGATION_HISTORY_LIMIT + 4

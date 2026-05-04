@@ -70,7 +70,11 @@ pub fn load() -> Config {
 
 fn config_path() -> PathBuf {
     let base = std::env::var("HOME")
-        .map(|h| PathBuf::from(h).join(".config").join("rust-tui-music-player"))
+        .map(|h| {
+            PathBuf::from(h)
+                .join(".config")
+                .join("rust-tui-music-player")
+        })
         .unwrap_or_else(|_| PathBuf::from("."));
     base.join("config.toml")
 }

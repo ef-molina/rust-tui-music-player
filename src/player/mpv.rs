@@ -77,7 +77,9 @@ impl MpvController {
         loop {
             match self.child.try_wait() {
                 Ok(Some(_)) => break,
-                Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(25)),
+                Ok(None) if Instant::now() < deadline => {
+                    std::thread::sleep(Duration::from_millis(25))
+                }
                 Ok(None) => {
                     let _ = self.child.kill();
                     let _ = self.child.wait();

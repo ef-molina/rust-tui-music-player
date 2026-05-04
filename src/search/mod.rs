@@ -9,10 +9,19 @@ const MAX_RESULTS: usize = 200;
 
 #[derive(Debug, Clone)]
 pub enum SearchMessage {
-    Batch { entries: Vec<SearchEntry>, scanned: usize },
-    EnrichedBatch { entries: Vec<SearchEntry> },
-    Upsert { entry: SearchEntry },
-    Finished { scanned: usize },
+    Batch {
+        entries: Vec<SearchEntry>,
+        scanned: usize,
+    },
+    EnrichedBatch {
+        entries: Vec<SearchEntry>,
+    },
+    Upsert {
+        entry: SearchEntry,
+    },
+    Finished {
+        scanned: usize,
+    },
     Failed(String),
 }
 
@@ -177,7 +186,10 @@ fn build_enriched_search_entry(root: &Path, path: PathBuf) -> Option<SearchEntry
     entry.title = title;
     entry.album = album;
 
-    let mut search_blob_parts = vec![entry.file_name.to_lowercase(), entry.relative_path.to_lowercase()];
+    let mut search_blob_parts = vec![
+        entry.file_name.to_lowercase(),
+        entry.relative_path.to_lowercase(),
+    ];
 
     if let Some(artist) = &entry.artist {
         search_blob_parts.push(artist.to_lowercase());
@@ -329,7 +341,10 @@ mod tests {
         ];
 
         let results = filter_results(&entries, "nokia");
-        assert_eq!(results.first().and_then(|entry| entry.title.as_deref()), Some("Nokia"));
+        assert_eq!(
+            results.first().and_then(|entry| entry.title.as_deref()),
+            Some("Nokia")
+        );
     }
 
     #[test]
@@ -376,7 +391,10 @@ mod tests {
         ];
 
         let results = filter_results(&entries, "kendrick lamar");
-        assert_eq!(results.first().and_then(|entry| entry.artist.as_deref()), Some("Kendrick Lamar"));
+        assert_eq!(
+            results.first().and_then(|entry| entry.artist.as_deref()),
+            Some("Kendrick Lamar")
+        );
     }
 
     #[test]
@@ -399,7 +417,10 @@ mod tests {
         ];
 
         let results = filter_results(&entries, "nokia");
-        assert_eq!(results.first().and_then(|entry| entry.artist.as_deref()), Some("Drake"));
+        assert_eq!(
+            results.first().and_then(|entry| entry.artist.as_deref()),
+            Some("Drake")
+        );
     }
 
     #[test]

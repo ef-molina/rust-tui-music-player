@@ -1,8 +1,8 @@
 # Rust TUI Music Player
 
-A terminal-based music player built in Rust, designed for fast, keyboard-driven music browsing and playback with a focus on **clean architecture**, **explicit state ownership**, and **predictable behavior**.
+A terminal-based music player built in Rust, designed for fast, keyboard-driven music browsing, playback, and downloading — with a focus on **clean architecture**, **explicit state ownership**, and **predictable behavior**.
 
-This project emphasizes filesystem-based music organization, album-aware playback, and a fully time-synced lyrics system — all within a responsive, flicker-free terminal UI.
+This project emphasizes filesystem-based music organization, album-aware playback, a fully time-synced lyrics system, and YouTube Music integration — all within a responsive, flicker-free terminal UI.
 
 ---
 
@@ -16,35 +16,139 @@ This project emphasizes filesystem-based music organization, album-aware playbac
 
 ![Full Lyrics View](docs/screenshots/lyrics.png)
 
+---
+
 ## Features
 
-- **Keyboard-driven navigation**
-  Browse your music library using arrow keys and Enter, with explicit pane focus switching
+### Browsing & Playback
 
-- **Hierarchical album view**
-  Navigate directory trees and automatically detect album folders (leaf directories with audio files)
+- **Keyboard-driven navigation** — browse your music library with arrow keys and Enter
+- **Hierarchical album view** — automatically detects album folders (leaf directories with audio files)
+- **Persistent album context** — album stays active while you browse other directories
+- **Playback controls** — play, pause, seek, skip, jump to now-playing
+- **Real-time progress display** — elapsed time and total duration
+- **Now-playing highlighting** — visual indicator across album and browser views
+- **Volume control** — raise/lower in 5% steps, displayed live in the footer
+- **Repeat mode** — cycle through off, track, and album repeat
+- **Shuffle** — pseudo-random next track within the current album
 
-- **Persistent album context**
-  Album selection remains active even when browsing other directories
+### Lyrics
 
-- **Playback controls**
-  Play, pause, seek forward/backward, skip to next/previous track, and jump to now-playing
+- **Time-synced lyrics (.lrc)** — parsed, synced to playback, displayed in mini and full-screen views
+- **Background lyrics fetching** — if no local `.lrc` exists, lyrics are fetched from [lrclib](https://github.com/tranxuanthang/lrclib) and cached locally
+- **In-memory negative cache** — avoids repeated network requests for tracks with no synced lyrics
 
-- **Real-time progress display**
-  Shows current playback position and total duration
+### YouTube Music Integration
 
-- **Now-playing highlighting**
-  Visual indicator of the currently playing track across album and browser views
+- **Song search** (`:ss`) — search YouTube Music for individual tracks
+- **Album search** (`:salb`) — search YouTube Music for official album releases and playlists
+- **Artist search** (`:sa`) — search YouTube Music for artist pages; selecting one drills into their albums
+- **Paginated results** — 20 results per page with a navigable "Load more" row
+- **Typed result badges** — ♪ song / ▣ album / ◉ artist so you know what you're selecting before downloading
+- **Full album download** — selecting an album downloads every track individually and normalizes each into your library
+- **Real-time download progress** — current track name, position (e.g. 3/12), and overall percentage shown in the status bar
+- **Download queue** — press `d` to view all recent downloads with status badges
+- **Cancel download** — press `x` to kill the active yt-dlp process immediately
 
-- **Time-synced lyrics (.lrc)**
-  Lyrics are parsed, synced to playback time, and displayed in both mini and full-screen views
+### Library & Organization
 
-- **Background lyrics fetching**
-  If no local `.lrc` file exists, synced lyrics may be fetched in the background using the
-  [lrclib](https://github.com/tranxuanthang/lrclib) API and cached locally
+- **Deterministic library layout** — downloaded tracks are normalized to `Artist/Year - Album/Title.opus`
+- **Primary artist extraction** — collaborative albums land under the primary artist folder, not a separate folder per featured artist
+- **Auto-refresh** — browser and album pane update automatically when downloaded tracks land in the current directory
+- **Background library indexing** — local search across artist, title, album, file name, and path
+- **Incremental search upserts** — newly downloaded tracks appear in search without restarting
 
-- **Clean separation of concerns**
-  Modular architecture with strict boundaries between UI, state, events, and player control
+---
+
+## Keyboard Controls
+
+| Key       | Action                                         |
+| --------- | ---------------------------------------------- |
+| ↑ / ↓     | Move selection / scroll lyrics                 |
+| Enter     | Open directory or play track                   |
+| Backspace | Navigate to parent / go back                   |
+| Space     | Play / pause                                   |
+| ← / →     | Seek backward / forward                        |
+| `s`       | Stop playback                                  |
+| `n`       | Jump to now-playing                            |
+| `b`       | Focus browser pane                             |
+| `t`       | Focus album pane                               |
+| `l`       | Focus lyrics pane                              |
+| `[` / `]` | Previous / next track                          |
+| `r`       | Cycle repeat mode (off → track → album)        |
+| `z`       | Toggle shuffle                                 |
+| `=`       | Volume up (+5%)                                |
+| `-`       | Volume down (−5%)                              |
+| `d`       | Toggle download queue overlay                  |
+| `x`       | Cancel active download                         |
+| `/`       | Open local library search                      |
+| `:`       | Open command mode                              |
+| `q`       | Quit                                           |
+
+### Command Mode (`:`)
+
+| Command          | Action                                               |
+| ---------------- | ---------------------------------------------------- |
+| `download <url>` | Download and normalize a track or playlist from URL  |
+| `ss <song>`      | Search YouTube Music for a song                      |
+| `salb <album>`   | Search YouTube Music for an album                    |
+| `sa <artist>`    | Search YouTube Music for an artist                   |
+
+Full-word aliases also work: `songsearch`, `albumsearch`, `artistsearch`.
+
+---
+
+## Configuration
+
+Copy `config.example.toml` to `~/.config/rust-tui-music-player/config.toml` and edit as needed. All settings are optional — defaults are shown:
+
+```toml
+# Root directory of your music library
+music_root = "~/Downloads/Media/Music"
+
+# Browser yt-dlp reads cookies from for YouTube authentication
+# Supported: brave, chrome, firefox, safari, edge, chromium
+browser = "brave"
+```
+
+---
+
+## Installation & Running
+
+### Prerequisites
+
+- **Rust 1.70+**
+- **mpv** — audio playback backend
+
+  ```bash
+  brew install mpv          # macOS
+  sudo apt install mpv      # Debian / Ubuntu
+  sudo pacman -S mpv        # Arch
+  ```
+
+- **yt-dlp** — YouTube Music search and download *(required for `:ss`, `:salb`, `:sa`, `download`)*
+
+  ```bash
+  brew install yt-dlp       # macOS
+  pip install yt-dlp        # pip
+  ```
+
+- **ffprobe** (part of ffmpeg) — metadata extraction
+
+  ```bash
+  brew install ffmpeg       # macOS
+  sudo apt install ffmpeg   # Debian / Ubuntu
+  ```
+
+### Build and Run
+
+```bash
+git clone https://github.com/ef-molina/rust-tui-music-player.git
+cd rust-tui-music-player
+cargo run --release
+```
+
+The app checks for `yt-dlp` and `mpv` at startup and exits with a clear error message if either is missing.
 
 ---
 
@@ -53,273 +157,34 @@ This project emphasizes filesystem-based music organization, album-aware playbac
 The application follows a strict **event-driven state machine** pattern:
 
 ```
-
 Input Events → Event Loop → State Mutations → UI Rendering
-
 ```
 
-### Key Design Principles
+- **Single source of truth** — all mutable state lives in `AppState`; only the event loop mutates it
+- **Pure rendering** — the UI module is read-only and produces no side effects
+- **Non-blocking main thread** — network, downloads, and library indexing run on background threads; channels deliver results back to the event loop
+- **Filesystem first** — no database; the directory structure is the library
 
-#### Single Source of Truth
-
-All mutable state lives in `AppState`.
-No other module mutates application data.
-
-#### Pure Rendering
-
-The UI module is read-only and produces no side effects.
-Focus changes never mutate application data.
-
-#### Decoupled Concerns
-
-- **UI Module (`ui/`)**
-  Pure rendering using `ratatui`; reads from `AppState` only
-
-- **Event Module (`event/`)**
-  Semantic application events (input-agnostic)
-
-- **Input Module (`input/`)**
-  Keyboard input mapped to semantic `AppEvent`s
-
-- **Player Module (`player/`)**
-  mpv subprocess management and JSON IPC communication
-
-- **Lyrics Module (`lyrics/`)**
-  LRC parsing and time-based lyric state tracking
-
-- **Filesystem Module (`fs/`)**
-  Directory traversal, album detection, and entry enumeration
-
-- **App Module (`app/`)**
-  Core application state and invariants
-
----
-
-## Album State Management
-
-The player distinguishes between **two independent navigation contexts**:
-
-### Browser State
-
-Tracks filesystem navigation:
-
-- `current_dir`
-- `browser_entries`
-- `selected_index`
-
-### Album State
-
-Tracks playback context:
-
-- `active_album_dir`
-- `album_entries`
-- `album_selected`
-
-An **album** is defined as any directory that:
-
-- Contains one or more audio files
-- Contains no subdirectories
-
-Directories with audio files but no subdirectories — including the root directory — are treated as **implicit albums**.
-
-Once an album is activated, it remains active even if the user navigates elsewhere in the browser. This enables the mental model:
-
-> Navigate the filesystem with one hand, control playback with the other.
-
----
-
-## Player Integration
-
-Playback is handled by [mpv](https://mpv.io), controlled via Unix socket JSON IPC.
-
-The player is launched with:
-
-```
-
---no-video --idle=yes --input-ipc-server=/tmp/rust-tui-mpv.sock
-
-```
-
-The `Player` abstraction exposes:
-
-- Playback state (Playing / Paused / Stopped)
-- Current track path
-- Real-time playback metrics (position, duration)
-- Automatic track advancement
-- Clean shutdown and process lifecycle handling
+See `DEV_README.md` for deep architecture, module map, logging, and extension notes.
 
 ---
 
 ## Lyrics System
 
-### Lyrics Loading
-
-- Timestamped `.lrc` files are detected alongside audio files
-- Lyrics are loaded automatically when a track starts playing
-- If no local `.lrc` file exists, lyrics may be fetched in the background and cached
-- Lyrics are cleared on stop or track change
-
-Expected file layout:
-
-```
-
-Music/
-├── Album/
-│   ├── Track01.mp3
-│   ├── Track01.lrc
-│   └── Track02.mp3
-
-```
-
-### LRC Format
-
-```
-
-[00:12.00]First line of lyrics
-[00:17.20]Second line of lyrics
-[00:21.10]Third line of lyrics
-
-```
-
-### Display Modes
-
-- **Mini lyrics view**
-  Displayed beneath the album track list, always time-synced
-
-- **Full lyrics view** (`l`)
-  Full-height lyrics pane with:
-  - Time-synced highlighting
-  - Centered active line
-  - Manual scrolling with automatic resume
-
-If no lyrics are available, the lyrics pane displays a clear fallback message.
+- Timestamped `.lrc` files are detected alongside audio files and loaded automatically
+- If no local `.lrc` file exists, lyrics are fetched in the background from lrclib and cached
+- Expected layout: `Music/Album/Track01.mp3` + `Music/Album/Track01.lrc`
+- **Mini lyrics view** — beneath the album track list, always time-synced
+- **Full lyrics view** (`l`) — full-height pane with time-synced highlighting and manual scrolling
 
 ---
 
-## Usage
+## Limitations
 
-### Keyboard Controls
-
-| Key       | Action                                     |
-| --------- | ------------------------------------------ |
-| ↑ / ↓     | Move selection / scroll lyrics             |
-| Enter     | Open directory or play track               |
-| Backspace | Navigate to parent directory / exit lyrics |
-| Space     | Play / pause                               |
-| ← / →     | Seek backward / forward                    |
-| s         | Stop playback                              |
-| n         | Jump to now-playing                        |
-| b         | Focus browser pane                         |
-| t         | Focus album pane                           |
-| l         | Focus lyrics pane                          |
-| [ / ]     | Previous / next track                      |
-| q         | Quit                                       |
-
-### Typical Workflow
-
-1. Launch the player
-2. Browse directories with ↑ / ↓
-3. Press Enter on an album directory
-4. Press Enter on a track to play
-5. Navigate elsewhere using the browser pane
-6. Return to the album pane — the album remains active
-7. Press `l` to view synced lyrics (if available)
-8. Control playback at any time using keyboard shortcuts
-
----
-
-## Configuration
-
-### Music Library Path
-
-The music library root is currently hardcoded in `src/app/mod.rs`.
-
-```rust
-let root_dir = PathBuf::from(
-    std::env::var("HOME")
-        .map(|h| format!("{}/Downloads/Media/Music", h))
-        .unwrap_or_else(|_| ".".into()),
-);
-```
-
-Future versions may support configuration files or environment variables.
-
-See `DEV_README.md` for deep architecture, logging, and extension notes.
-
----
-
-## Limitations & Known Issues
-
-- Audio-only playback (video disabled)
-- Filesystem-based albums only (no metadata-based grouping)
-- Limited metadata usage (tags parsed internally but not exposed for navigation)
-- Single mpv instance (shared IPC socket)
-- No playlists, shuffle, or repeat modes
-- Unix-only IPC (Windows support not yet implemented)
-
----
-
-## Future Improvements
-
-- Metadata-driven browsing and display
-- Shuffle and repeat modes
-- Playlist support
-- Configuration file support
-- Lyrics enhancements (negative caching, timeouts, karaoke-style highlighting)
-- Performance improvements for large libraries
-- Windows support
-- Unit and integration tests
-
----
-
-## Installation & Running
-
-### Prerequisites
-
-- **Rust 1.70+** (2021 semantics)
-- **mpv** (audio backend)
-- **Unix socket support** (Linux, macOS, or WSL2)
-
-### Install mpv
-
-**macOS (Homebrew)**
-
-```bash
-brew install mpv
-```
-
-**Debian / Ubuntu**
-
-```bash
-sudo apt-get install mpv
-```
-
-**Arch Linux**
-
-```bash
-sudo pacman -S mpv
-```
-
-### Build and Run
-
-```bash
-git clone https://github.com/yourusername/rust-tui-music-player.git
-cd rust-tui-music-player
-cargo run
-```
-
-For release builds:
-
-```bash
-cargo build --release
-./target/release/rust-tui-music-player
-```
-
-By default, the player starts with the music library rooted at:
-
-```
-~/Downloads/Media/Music
-```
+- Audio-only playback (video disabled via mpv flag)
+- Unix-only IPC (Windows not supported)
+- Single mpv instance per session
+- YouTube authentication requires a supported browser (Brave, Chrome, Firefox, etc.) to be signed into YouTube
 
 ---
 
@@ -329,9 +194,9 @@ Contributions are welcome. Please follow these guidelines:
 
 - Preserve the existing architecture
 - Keep all state mutations in the event loop
-- UI code must remain pure
-- Explain **why**, not just **what**
+- UI code must remain pure (no side effects in `ui/mod.rs`)
 - Route new behavior through `AppEvent` → `AppState` → rendering
+- See `CONTRIBUTING.md` for full guidelines
 
 ---
 
@@ -347,5 +212,4 @@ MIT License. See the `LICENSE` file for details.
 - Terminal input via [crossterm](https://github.com/crossterm-rs/crossterm)
 - Audio playback powered by [mpv](https://mpv.io)
 - Synced lyrics provided by [lrclib](https://github.com/tranxuanthang/lrclib)
-
----
+- YouTube Music download via [yt-dlp](https://github.com/yt-dlp/yt-dlp)
