@@ -38,10 +38,10 @@ fn default_music_root() -> String {
 impl Config {
     /// Expand `~` at the start of `music_root` to the real home directory.
     pub fn music_root_path(&self) -> PathBuf {
-        if let Some(rest) = self.music_root.strip_prefix("~/") {
-            if let Ok(home) = std::env::var("HOME") {
-                return PathBuf::from(format!("{home}/{rest}"));
-            }
+        if let Some(rest) = self.music_root.strip_prefix("~/")
+            && let Ok(home) = std::env::var("HOME")
+        {
+            return PathBuf::from(format!("{home}/{rest}"));
         }
         PathBuf::from(&self.music_root)
     }

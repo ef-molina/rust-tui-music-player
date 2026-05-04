@@ -71,7 +71,6 @@ pub struct NowPlaying {
     pub title: String,
     pub artist: String,
     pub album: String,
-    pub duration_secs_meta: u64,
 }
 
 pub enum LyricsStatus {

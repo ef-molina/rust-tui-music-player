@@ -13,13 +13,12 @@ pub enum JobResult {
         pid: u32,
     },
 
-    DownloadCancelled {
-        url: String,
-    },
-
     DownloadProgress {
         url: String,
+        /// 0–100 for the current track (kept for future per-track display)
+        #[allow(dead_code)]
         track_percent: f32,
+        /// 0–100 across the whole album/playlist
         overall_percent: f32,
         track_title: String,
         track_index: u32,

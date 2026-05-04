@@ -165,13 +165,12 @@ fn spawn_playlist_download(
         let trimmed = rest.trim();
 
         // "[download] Downloading item X of Y"
-        if let Some(item_str) = trimmed.strip_prefix("Downloading item ") {
-            if let Some((idx, tot)) = item_str.split_once(" of ") {
-                if let (Ok(i), Ok(t)) = (idx.trim().parse::<u32>(), tot.trim().parse::<u32>()) {
-                    current_item = i;
-                    total_items = t;
-                }
-            }
+        if let Some(item_str) = trimmed.strip_prefix("Downloading item ")
+            && let Some((idx, tot)) = item_str.split_once(" of ")
+            && let (Ok(i), Ok(t)) = (idx.trim().parse::<u32>(), tot.trim().parse::<u32>())
+        {
+            current_item = i;
+            total_items = t;
         }
         // "[download] Destination: /full/path/Title [id].ext"
         else if let Some(dest) = trimmed.strip_prefix("Destination: ") {
@@ -191,24 +190,24 @@ fn spawn_playlist_download(
             };
         }
         // "[download]  42.3% of 5.23MiB at ..."
-        else if let Some(pct_str) = trimmed.split('%').next() {
-            if let Ok(track_pct) = pct_str.trim().parse::<f32>() {
-                let overall = if total_items > 0 {
-                    ((current_item.saturating_sub(1)) as f32 + track_pct / 100.0)
-                        / total_items as f32
-                        * 100.0
-                } else {
-                    track_pct
-                };
-                let _ = tx.send(JobResult::DownloadProgress {
-                    url: url.clone(),
-                    track_percent: track_pct,
-                    overall_percent: overall,
-                    track_title: current_title.clone(),
-                    track_index: current_item,
-                    total_tracks: total_items,
-                });
-            }
+        else if let Some(pct_str) = trimmed.split('%').next()
+            && let Ok(track_pct) = pct_str.trim().parse::<f32>()
+        {
+            let overall = if total_items > 0 {
+                ((current_item.saturating_sub(1)) as f32 + track_pct / 100.0)
+                    / total_items as f32
+                    * 100.0
+            } else {
+                track_pct
+            };
+            let _ = tx.send(JobResult::DownloadProgress {
+                url: url.clone(),
+                track_percent: track_pct,
+                overall_percent: overall,
+                track_title: current_title.clone(),
+                track_index: current_item,
+                total_tracks: total_items,
+            });
         }
     }
 
@@ -397,7 +396,6 @@ fn play_album_index(app: &mut AppState, index: usize) {
         title: metadata.title.clone(),
         artist: metadata.artist.clone(),
         album: metadata.album.clone().unwrap_or_default(),
-        duration_secs_meta: metadata.duration_secs as u64,
     });
 
     // build cache key once
@@ -970,19 +968,6 @@ fn handle_tick(app: &mut AppState) {
                 tracing::info!(url = %url, pid, "Download job started");
             }
 
-            JobResult::DownloadCancelled { url } => {
-                app.active_download_url = None;
-                app.active_download = None;
-                app.active_download_pid = None;
-                if let Some(job) = app.download_jobs.iter_mut().find(|j| j.url == url) {
-                    job.status = crate::app::DownloadJobStatus::Cancelled;
-                }
-                app.set_status(
-                    StatusLevel::Warning,
-                    "Download cancelled".to_string(),
-                    Some(300),
-                );
-            }
             JobResult::DownloadFinished { url, temp_path } => {
                 app.active_download_url = None;
                 if !url.is_empty() {
@@ -1041,12 +1026,11 @@ fn handle_tick(app: &mut AppState) {
                             .map(|(track_dir, album_dir)| track_dir == album_dir)
                             .unwrap_or(false);
 
-                        if album_stale {
-                            if let Ok(Some(tracks)) =
+                        if album_stale
+                            && let Ok(Some(tracks)) =
                                 fs::detect_album(app.active_album_dir.as_deref().unwrap())
-                            {
-                                app.album_entries = tracks;
-                            }
+                        {
+                            app.album_entries = tracks;
                         }
                     }
                     Err(err) => {
@@ -1787,13 +1771,7 @@ fn run_app() -> std::io::Result<()> {
                     | AppEvent::SearchBackspace
                     | AppEvent::SearchMoveUp
                     | AppEvent::SearchMoveDown
-                    | AppEvent::SearchActivate
-                    | AppEvent::ToggleRepeat
-                    | AppEvent::ToggleShuffle
-                    | AppEvent::VolumeUp
-                    | AppEvent::VolumeDown
-                    | AppEvent::ToggleDownloadQueue
-                    | AppEvent::CancelDownload => {}
+                    | AppEvent::SearchActivate => {}
                 }
             }
         }

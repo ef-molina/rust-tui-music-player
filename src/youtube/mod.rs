@@ -1,7 +1,6 @@
 //! YouTube search via yt-dlp — songs, albums, and artists.
 
-use std::io::{BufRead, BufReader};
-use std::process::{Command, Stdio};
+use std::process::Command;
 
 pub const PAGE_SIZE: usize = 20;
 
