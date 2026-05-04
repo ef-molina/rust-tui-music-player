@@ -108,9 +108,7 @@ pub fn parse_command(input: &str) -> Command {
     let input = input.trim();
 
     // Try each prefix in order — longer prefixes first to avoid mis-matching
-    for (prefix, builder) in &[
-        ("download ", Command::Download { url: String::new() } ),
-    ] {
+    for (prefix, builder) in &[("download ", Command::Download { url: String::new() })] {
         let _ = (prefix, builder);
     }
 
@@ -126,7 +124,9 @@ pub fn parse_command(input: &str) -> Command {
         if let Some(rest) = input.strip_prefix(prefix) {
             let q = rest.trim();
             if !q.is_empty() {
-                return Command::SearchSong { query: q.to_string() };
+                return Command::SearchSong {
+                    query: q.to_string(),
+                };
             }
         }
     }
@@ -136,7 +136,9 @@ pub fn parse_command(input: &str) -> Command {
         if let Some(rest) = input.strip_prefix(prefix) {
             let q = rest.trim();
             if !q.is_empty() {
-                return Command::SearchAlbum { query: q.to_string() };
+                return Command::SearchAlbum {
+                    query: q.to_string(),
+                };
             }
         }
     }
@@ -146,7 +148,9 @@ pub fn parse_command(input: &str) -> Command {
         if let Some(rest) = input.strip_prefix(prefix) {
             let q = rest.trim();
             if !q.is_empty() {
-                return Command::SearchArtist { query: q.to_string() };
+                return Command::SearchArtist {
+                    query: q.to_string(),
+                };
             }
         }
     }
@@ -170,32 +174,62 @@ mod tests {
 
     #[test]
     fn parse_song_search_shorthand() {
-        assert_eq!(parse_command("ss God's Plan"), Command::SearchSong { query: "God's Plan".into() });
+        assert_eq!(
+            parse_command("ss God's Plan"),
+            Command::SearchSong {
+                query: "God's Plan".into()
+            }
+        );
     }
 
     #[test]
     fn parse_album_search_shorthand() {
-        assert_eq!(parse_command("salb Dark Side of the Moon"), Command::SearchAlbum { query: "Dark Side of the Moon".into() });
+        assert_eq!(
+            parse_command("salb Dark Side of the Moon"),
+            Command::SearchAlbum {
+                query: "Dark Side of the Moon".into()
+            }
+        );
     }
 
     #[test]
     fn parse_artist_search_shorthand() {
-        assert_eq!(parse_command("sa Drake"), Command::SearchArtist { query: "Drake".into() });
+        assert_eq!(
+            parse_command("sa Drake"),
+            Command::SearchArtist {
+                query: "Drake".into()
+            }
+        );
     }
 
     #[test]
     fn parse_song_search_full_word() {
-        assert_eq!(parse_command("songsearch Hotline Bling"), Command::SearchSong { query: "Hotline Bling".into() });
+        assert_eq!(
+            parse_command("songsearch Hotline Bling"),
+            Command::SearchSong {
+                query: "Hotline Bling".into()
+            }
+        );
     }
 
     #[test]
     fn parse_album_search_full_word() {
-        assert_eq!(parse_command("albumsearch Take Care"), Command::SearchAlbum { query: "Take Care".into() });
+        assert_eq!(
+            parse_command("albumsearch Take Care"),
+            Command::SearchAlbum {
+                query: "Take Care".into()
+            }
+        );
     }
 
     #[test]
     fn parse_artist_search_full_word() {
-        assert_eq!(parse_command("artistsearch Kendrick Lamar"), Command::SearchArtist { query: "Kendrick Lamar".into() });
+        assert_eq!(
+            parse_command("artistsearch Kendrick Lamar"),
+            Command::SearchArtist {
+                query: "Kendrick Lamar".into()
+            }
+        );
     }
 
     #[test]
@@ -208,7 +242,12 @@ mod tests {
     #[test]
     fn parse_download_command() {
         let cmd = parse_command("download https://example.com");
-        assert_eq!(cmd, Command::Download { url: "https://example.com".into() });
+        assert_eq!(
+            cmd,
+            Command::Download {
+                url: "https://example.com".into()
+            }
+        );
     }
 
     #[test]
@@ -230,8 +269,14 @@ mod tests {
 
     #[test]
     fn top_command_returns_best_match() {
-        assert_eq!(top_command_spec("d").map(|spec| spec.name), Some("download"));
-        assert_eq!(top_command_spec("normalize").map(|spec| spec.name), Some("download"));
+        assert_eq!(
+            top_command_spec("d").map(|spec| spec.name),
+            Some("download")
+        );
+        assert_eq!(
+            top_command_spec("normalize").map(|spec| spec.name),
+            Some("download")
+        );
     }
 
     #[test]

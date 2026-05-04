@@ -60,7 +60,10 @@ fn muted_style() -> Style {
 fn badge_span(text: &str, fg: Color) -> Span<'static> {
     Span::styled(
         format!(" {text} "),
-        Style::default().fg(fg).bg(BADGE_BG).add_modifier(Modifier::BOLD),
+        Style::default()
+            .fg(fg)
+            .bg(BADGE_BG)
+            .add_modifier(Modifier::BOLD),
     )
 }
 
@@ -317,7 +320,10 @@ fn current_status(app: &AppState) -> (StatusLevel, String) {
             );
         }
         SearchStatus::Failed(error) => {
-            return (StatusLevel::Error, format!("Search indexing failed: {error}"));
+            return (
+                StatusLevel::Error,
+                format!("Search indexing failed: {error}"),
+            );
         }
         SearchStatus::Idle | SearchStatus::Ready => {}
     }
@@ -327,7 +333,10 @@ fn current_status(app: &AppState) -> (StatusLevel, String) {
         LyricsStatus::Loaded(_) => (StatusLevel::Success, "Lyrics synced".to_string()),
         LyricsStatus::None if !app.search.index_entries.is_empty() => (
             StatusLevel::Success,
-            format!("Library ready • {} indexed tracks", app.search.index_entries.len()),
+            format!(
+                "Library ready • {} indexed tracks",
+                app.search.index_entries.len()
+            ),
         ),
         LyricsStatus::None => (StatusLevel::Info, "Ready".to_string()),
     }
@@ -416,7 +425,10 @@ fn render_command_text_bar(
     {
         frame.render_widget(
             Paragraph::new(Line::from(vec![
-                Span::styled(prefix, Style::default().fg(WARNING).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    prefix,
+                    Style::default().fg(WARNING).add_modifier(Modifier::BOLD),
+                ),
                 badge_span(spec.name, WARNING),
                 Span::styled(rest.to_string(), Style::default().fg(Color::White)),
             ]))
@@ -473,16 +485,13 @@ fn render_command_helper(frame: &mut Frame, area: Rect, app: &AppState) {
         .into_iter()
         .map(|spec| {
             ListItem::new(vec![
-                Line::from(vec![
-                    Span::styled(
-                        spec.syntax,
-                        Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
-                    ),
-                ]),
-                Line::from(Span::styled(
-                    spec.description,
-                    muted_style(),
-                )),
+                Line::from(vec![Span::styled(
+                    spec.syntax,
+                    Style::default()
+                        .fg(Color::White)
+                        .add_modifier(Modifier::BOLD),
+                )]),
+                Line::from(Span::styled(spec.description, muted_style())),
             ])
         })
         .collect();
@@ -548,7 +557,12 @@ fn render_search_results_content(frame: &mut Frame, area: Rect, app: &AppState) 
                 (None, None) => display_track_name(&entry.file_name),
             };
             let primary_text = if i == app.search.selected {
-                marquee_text(&primary, primary_width, app.ui_tick, app.selection_anchor_tick)
+                marquee_text(
+                    &primary,
+                    primary_width,
+                    app.ui_tick,
+                    app.selection_anchor_tick,
+                )
             } else {
                 truncate_middle(&primary, primary_width)
             };
@@ -557,15 +571,9 @@ fn render_search_results_content(frame: &mut Frame, area: Rect, app: &AppState) 
             ListItem::new(vec![
                 Line::from(vec![
                     Span::raw("🎵 "),
-                    Span::styled(
-                        primary_text,
-                        Style::default().add_modifier(Modifier::BOLD),
-                    ),
+                    Span::styled(primary_text, Style::default().add_modifier(Modifier::BOLD)),
                 ]),
-                Line::from(Span::styled(
-                    format!("   {path_text}"),
-                    muted_style(),
-                )),
+                Line::from(Span::styled(format!("   {path_text}"), muted_style())),
             ])
         })
         .collect();
@@ -581,11 +589,7 @@ fn render_search_results_content(frame: &mut Frame, area: Rect, app: &AppState) 
 
 fn render_modal_backdrop(frame: &mut Frame, area: Rect) {
     frame.render_widget(
-        Block::default().style(
-            Style::default()
-                .bg(SCRIM)
-                .add_modifier(Modifier::DIM),
-        ),
+        Block::default().style(Style::default().bg(SCRIM).add_modifier(Modifier::DIM)),
         area,
     );
 }
@@ -647,7 +651,11 @@ fn render_search_picker(frame: &mut Frame, area: Rect, app: &AppState) {
 // Pane renderers
 // -----------------------------------------------------------------------------
 fn render_browser(frame: &mut Frame, area: Rect, app: &AppState) {
-    let dir_count = app.browser_entries.iter().filter(|entry| entry.is_dir).count();
+    let dir_count = app
+        .browser_entries
+        .iter()
+        .filter(|entry| entry.is_dir)
+        .count();
     let items: Vec<ListItem> = app
         .browser_entries
         .iter()
@@ -724,7 +732,12 @@ fn render_album(frame: &mut Frame, area: Rect, app: &AppState) {
             let available = area.width.saturating_sub(6) as usize;
 
             let name = if app.focus == FocusPane::Album && i == app.album_selected {
-                marquee_text(&display_name, available, app.ui_tick, app.selection_anchor_tick)
+                marquee_text(
+                    &display_name,
+                    available,
+                    app.ui_tick,
+                    app.selection_anchor_tick,
+                )
             } else {
                 display_name
             };
@@ -763,16 +776,34 @@ fn render_album(frame: &mut Frame, area: Rect, app: &AppState) {
 // -----------------------------------------------------------------------------
 fn kind_badge(kind: crate::youtube::SearchKind) -> Span<'static> {
     match kind {
-        crate::youtube::SearchKind::Song   => Span::styled(" ♪ ", Style::default().fg(Color::Black).bg(Color::Rgb(102,187,160)).add_modifier(Modifier::BOLD)),
-        crate::youtube::SearchKind::Album  => Span::styled(" ▣ ", Style::default().fg(Color::Black).bg(Color::Rgb(130,150,200)).add_modifier(Modifier::BOLD)),
-        crate::youtube::SearchKind::Artist => Span::styled(" ◉ ", Style::default().fg(Color::Black).bg(Color::Rgb(200,150,100)).add_modifier(Modifier::BOLD)),
+        crate::youtube::SearchKind::Song => Span::styled(
+            " ♪ ",
+            Style::default()
+                .fg(Color::Black)
+                .bg(Color::Rgb(102, 187, 160))
+                .add_modifier(Modifier::BOLD),
+        ),
+        crate::youtube::SearchKind::Album => Span::styled(
+            " ▣ ",
+            Style::default()
+                .fg(Color::Black)
+                .bg(Color::Rgb(130, 150, 200))
+                .add_modifier(Modifier::BOLD),
+        ),
+        crate::youtube::SearchKind::Artist => Span::styled(
+            " ◉ ",
+            Style::default()
+                .fg(Color::Black)
+                .bg(Color::Rgb(200, 150, 100))
+                .add_modifier(Modifier::BOLD),
+        ),
     }
 }
 
 fn render_youtube_results(frame: &mut Frame, area: Rect, app: &AppState) {
     let kind_label = match app.youtube_search_kind {
-        crate::youtube::SearchKind::Song   => "Songs",
-        crate::youtube::SearchKind::Album  => "Albums",
+        crate::youtube::SearchKind::Song => "Songs",
+        crate::youtube::SearchKind::Album => "Albums",
         crate::youtube::SearchKind::Artist => "Artists",
     };
     let title = if app.youtube_searching {
@@ -818,10 +849,15 @@ fn render_youtube_results(frame: &mut Frame, area: Rect, app: &AppState) {
             let is_selected = i == app.youtube_selected;
 
             let title_str = truncate_middle(&result.title, inner_width.saturating_sub(16));
-            let count_tag = result.track_count.map(|n| format!("  {n} tracks")).unwrap_or_default();
+            let count_tag = result
+                .track_count
+                .map(|n| format!("  {n} tracks"))
+                .unwrap_or_default();
 
             let title_style = if is_selected {
-                Style::default().fg(HIGHLIGHT_FG).add_modifier(Modifier::BOLD)
+                Style::default()
+                    .fg(HIGHLIGHT_FG)
+                    .add_modifier(Modifier::BOLD)
             } else {
                 Style::default().fg(ACCENT)
             };
@@ -852,7 +888,9 @@ fn render_youtube_results(frame: &mut Frame, area: Rect, app: &AppState) {
         items.push(ListItem::new(Line::from(Span::styled(
             "  ↓  Load more…",
             if is_selected {
-                Style::default().fg(HIGHLIGHT_FG).add_modifier(Modifier::BOLD)
+                Style::default()
+                    .fg(HIGHLIGHT_FG)
+                    .add_modifier(Modifier::BOLD)
             } else {
                 Style::default().fg(MUTED)
             },
@@ -875,7 +913,9 @@ fn render_youtube_results(frame: &mut Frame, area: Rect, app: &AppState) {
 
     // Hint line at bottom — context-sensitive based on selected result kind
     let hint_text = match app.youtube_results.get(app.youtube_selected) {
-        Some(r) if r.kind == crate::youtube::SearchKind::Artist => "Enter browse albums · Backspace back · ↑↓ move",
+        Some(r) if r.kind == crate::youtube::SearchKind::Artist => {
+            "Enter browse albums · Backspace back · ↑↓ move"
+        }
         _ => "Enter download · Backspace back · ↑↓ move",
     };
     let hint = Paragraph::new(hint_text)
@@ -944,7 +984,8 @@ fn render_lyrics_mini(frame: &mut Frame, area: Rect, app: &AppState) {
 
                     if add_previous {
                         if let Some(index) = prev_index {
-                            let wrapped_prev = wrap_text_to_width(&lyrics.lines[index].text, max_width);
+                            let wrapped_prev =
+                                wrap_text_to_width(&lyrics.lines[index].text, max_width);
                             if out.len() + wrapped_prev.len() <= max_height {
                                 let mut prev_lines = Vec::new();
                                 for row in wrapped_prev {
@@ -1055,9 +1096,7 @@ fn render_lyrics_full(frame: &mut Frame, area: Rect, app: &AppState) {
                         let is_active = v.logical_index == logical_center;
 
                         let style = if is_active {
-                            Style::default()
-                                .fg(ACCENT)
-                                .add_modifier(Modifier::BOLD)
+                            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)
                         } else {
                             muted_style()
                         };
@@ -1099,7 +1138,10 @@ fn render_statusline(frame: &mut Frame, area: Rect, app: &AppState) {
     if let Some(dl) = &app.active_download {
         // Replace the status bar with a download progress bar
         let available = inner.width.saturating_sub(2) as usize;
-        let label = format!("⬇  {} ({}/{})", dl.track_title, dl.track_index, dl.total_tracks);
+        let label = format!(
+            "⬇  {} ({}/{})",
+            dl.track_title, dl.track_index, dl.total_tracks
+        );
         let pct_label = format!("  {:.0}%", dl.overall_percent);
         let label_width = UnicodeWidthStr::width(label.as_str());
         let pct_width = UnicodeWidthStr::width(pct_label.as_str());
@@ -1121,7 +1163,10 @@ fn render_statusline(frame: &mut Frame, area: Rect, app: &AppState) {
                     "─".repeat(bar_width.saturating_sub(filled)),
                     Style::default().fg(SUBTLE),
                 ),
-                Span::styled(pct_label, Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    pct_label,
+                    Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+                ),
             ])),
             inner,
         );
@@ -1213,7 +1258,11 @@ pub fn draw(frame: &mut Frame, app: &AppState) {
     frame.render_widget(
         Paragraph::new("Rust TUI Music Player")
             .alignment(Alignment::Left)
-            .style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+            .style(
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            ),
         header_chunks[0],
     );
 
@@ -1384,17 +1433,14 @@ pub fn draw(frame: &mut Frame, app: &AppState) {
 
     // Artist + album metadata
     frame.render_widget(
-        Paragraph::new(Line::from(Span::styled(
-            secondary_label,
-            muted_style(),
-        )))
-        .alignment(Alignment::Center),
+        Paragraph::new(Line::from(Span::styled(secondary_label, muted_style())))
+            .alignment(Alignment::Center),
         footer_rows[1],
     );
 
     // Controls hint with live repeat/shuffle indicators
     let repeat_label = match app.repeat_mode {
-        crate::app::RepeatMode::Off   => "r off",
+        crate::app::RepeatMode::Off => "r off",
         crate::app::RepeatMode::Track => "r trk",
         crate::app::RepeatMode::Album => "r alb",
     };
@@ -1405,8 +1451,8 @@ pub fn draw(frame: &mut Frame, app: &AppState) {
     );
     frame.render_widget(
         Paragraph::new(controls)
-        .alignment(Alignment::Center)
-        .style(muted_style()),
+            .alignment(Alignment::Center)
+            .style(muted_style()),
         footer_rows[2],
     );
 
@@ -1480,19 +1526,45 @@ fn render_download_queue(frame: &mut Frame, area: Rect, app: &AppState) {
         .map(|job| {
             let (status_span, title_style) = match &job.status {
                 DownloadJobStatus::Active => (
-                    Span::styled(" ⬇ ", Style::default().fg(Color::Black).bg(ACCENT).add_modifier(Modifier::BOLD)),
-                    Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+                    Span::styled(
+                        " ⬇ ",
+                        Style::default()
+                            .fg(Color::Black)
+                            .bg(ACCENT)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Style::default()
+                        .fg(Color::White)
+                        .add_modifier(Modifier::BOLD),
                 ),
                 DownloadJobStatus::Done => (
-                    Span::styled(" ✓ ", Style::default().fg(Color::Black).bg(Color::Rgb(102, 187, 106)).add_modifier(Modifier::BOLD)),
+                    Span::styled(
+                        " ✓ ",
+                        Style::default()
+                            .fg(Color::Black)
+                            .bg(Color::Rgb(102, 187, 106))
+                            .add_modifier(Modifier::BOLD),
+                    ),
                     Style::default().fg(MUTED),
                 ),
                 DownloadJobStatus::Failed(_) => (
-                    Span::styled(" ✗ ", Style::default().fg(Color::White).bg(DANGER).add_modifier(Modifier::BOLD)),
+                    Span::styled(
+                        " ✗ ",
+                        Style::default()
+                            .fg(Color::White)
+                            .bg(DANGER)
+                            .add_modifier(Modifier::BOLD),
+                    ),
                     Style::default().fg(MUTED),
                 ),
                 DownloadJobStatus::Cancelled => (
-                    Span::styled(" — ", Style::default().fg(Color::White).bg(SUBTLE).add_modifier(Modifier::BOLD)),
+                    Span::styled(
+                        " — ",
+                        Style::default()
+                            .fg(Color::White)
+                            .bg(SUBTLE)
+                            .add_modifier(Modifier::BOLD),
+                    ),
                     Style::default().fg(SUBTLE),
                 ),
             };
@@ -1500,11 +1572,18 @@ fn render_download_queue(frame: &mut Frame, area: Rect, app: &AppState) {
             let title_width = area.width.saturating_sub(10) as usize;
             let title = truncate_middle(&job.title, title_width);
 
-            let mut spans = vec![status_span, Span::raw(" "), Span::styled(title, title_style)];
+            let mut spans = vec![
+                status_span,
+                Span::raw(" "),
+                Span::styled(title, title_style),
+            ];
 
             if let DownloadJobStatus::Failed(err) = &job.status {
                 let err_short = truncate_middle(err, title_width.saturating_sub(4));
-                spans.push(Span::styled(format!("  {err_short}"), Style::default().fg(DANGER)));
+                spans.push(Span::styled(
+                    format!("  {err_short}"),
+                    Style::default().fg(DANGER),
+                ));
             }
 
             ListItem::new(Line::from(spans))

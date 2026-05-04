@@ -149,10 +149,10 @@ Initial release.
 ### Known Limitations at Release
 
 - No playlist management (album-based playback only)
-- No volume control within the UI *(added in v0.3.0)*
-- No shuffle or repeat modes *(added in v0.3.0)*
-- Music root directory was static *(configurable since v0.3.0)*
-- No YouTube Music integration *(added in v0.2.0)*
+- No volume control within the UI _(added in v0.3.0)_
+- No shuffle or repeat modes _(added in v0.3.0)_
+- Music root directory was static _(configurable since v0.3.0)_
+- No YouTube Music integration _(added in v0.2.0)_
 - In-flight lyrics fetches are not actively cancelled when switching tracks (stale results are safely ignored)
 - Unix-only support (mpv IPC via Unix sockets)
 

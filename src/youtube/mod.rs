@@ -91,7 +91,11 @@ pub fn search_songs(query: &str, page: usize, browser: &str) -> Result<Vec<Youtu
 /// Search YouTube Music for official album releases matching `query`.
 /// Uses MPREb_* IDs which are canonical YTM album release identifiers.
 /// `page` is 0-based; fetches PAGE_SIZE albums per page.
-pub fn search_albums(query: &str, page: usize, browser: &str) -> Result<Vec<YoutubeResult>, String> {
+pub fn search_albums(
+    query: &str,
+    page: usize,
+    browser: &str,
+) -> Result<Vec<YoutubeResult>, String> {
     let search_url = format!(
         "https://music.youtube.com/search?q={}",
         urlencoding::encode(query)
@@ -195,7 +199,11 @@ fn fetch_album_details(url: String, browser: &str) -> Option<YoutubeResult> {
 /// Search YouTube Music for artist channels matching `query`.
 /// Returns artist pages (UC* IDs) — selecting one can browse their discography.
 /// `page` is 0-based; fetches PAGE_SIZE results per page.
-pub fn search_artists(query: &str, page: usize, browser: &str) -> Result<Vec<YoutubeResult>, String> {
+pub fn search_artists(
+    query: &str,
+    page: usize,
+    browser: &str,
+) -> Result<Vec<YoutubeResult>, String> {
     let search_url = format!(
         "https://music.youtube.com/search?q={}",
         urlencoding::encode(query)
@@ -302,13 +310,26 @@ mod tests {
             {"id": "MPREb_abc", "title": "Album", "url": "https://music.youtube.com/browse/MPREb_abc"},
         ]);
 
-        let results: Vec<YoutubeResult> = entries.as_array().unwrap().iter().filter_map(|e| {
-            let url = e["url"].as_str()?;
-            if !url.contains("watch?v=") { return None; }
-            let title = e["title"].as_str().filter(|s| !s.is_empty())?.to_string();
-            let subtitle = e["uploader"].as_str().map(|s| s.to_string());
-            Some(YoutubeResult { title, url: url.to_string(), kind: SearchKind::Song, subtitle, track_count: None })
-        }).collect();
+        let results: Vec<YoutubeResult> = entries
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|e| {
+                let url = e["url"].as_str()?;
+                if !url.contains("watch?v=") {
+                    return None;
+                }
+                let title = e["title"].as_str().filter(|s| !s.is_empty())?.to_string();
+                let subtitle = e["uploader"].as_str().map(|s| s.to_string());
+                Some(YoutubeResult {
+                    title,
+                    url: url.to_string(),
+                    kind: SearchKind::Song,
+                    subtitle,
+                    track_count: None,
+                })
+            })
+            .collect();
 
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].title, "Never Gonna Give You Up");
