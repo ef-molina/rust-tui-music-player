@@ -1186,6 +1186,12 @@ fn run_app() -> std::io::Result<()> {
                         app.downloads.show_queue = !app.downloads.show_queue;
                     }
 
+                    AppEvent::CloseDownloadQueue => {
+                        if app.downloads.show_queue {
+                            app.downloads.show_queue = false;
+                        }
+                    }
+
                     AppEvent::CancelDownload => {
                         if let Some(pid) = app.downloads.active_pid {
                             let _ = std::process::Command::new("kill")
