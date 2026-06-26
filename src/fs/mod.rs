@@ -74,6 +74,9 @@ pub fn read_dir(path: &Path) -> std::io::Result<Vec<BrowserEntry>> {
         let name = entry.file_name().to_string_lossy().to_string();
 
         if file_type.is_dir() {
+            if name.starts_with('.') {
+                continue;
+            }
             dirs.push(BrowserEntry { name, is_dir: true });
         } else if is_supported_audio_file(&name) {
             files.push(BrowserEntry {
@@ -88,4 +91,39 @@ pub fn read_dir(path: &Path) -> std::io::Result<Vec<BrowserEntry>> {
 
     dirs.extend(files);
     Ok(dirs)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::read_dir;
+    use crate::app::BrowserEntry;
+    use std::fs;
+    use tempfile::tempdir;
+
+    #[test]
+    fn read_dir_excludes_dot_directories_but_keeps_normal_dirs_and_audio_files() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+
+        fs::create_dir(root.join(".staging")).unwrap();
+        fs::create_dir(root.join("Albums")).unwrap();
+        fs::write(root.join("song.opus"), b"audio").unwrap();
+        fs::write(root.join("cover.jpg"), b"image").unwrap();
+
+        let entries = read_dir(root).unwrap();
+
+        assert_eq!(
+            entries,
+            vec![
+                BrowserEntry {
+                    name: "Albums".into(),
+                    is_dir: true,
+                },
+                BrowserEntry {
+                    name: "song.opus".into(),
+                    is_dir: false,
+                },
+            ]
+        );
+    }
 }
