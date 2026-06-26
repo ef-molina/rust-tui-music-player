@@ -808,6 +808,37 @@ fn kind_badge(kind: crate::youtube::SearchKind) -> Span<'static> {
     }
 }
 
+fn format_song_identity_line(meta: &crate::youtube::YoutubeSongMetadata) -> Option<String> {
+    match (meta.artist.as_deref(), meta.album.as_deref()) {
+        (Some(artist), Some(album)) => Some(format!("{artist} | {album}")),
+        (Some(artist), None) => Some(artist.to_string()),
+        (None, Some(album)) => Some(album.to_string()),
+        (None, None) => None,
+    }
+}
+
+fn format_song_meta_line(meta: &crate::youtube::YoutubeSongMetadata) -> String {
+    let mut parts = Vec::new();
+
+    if let Some(duration) = meta.duration_secs {
+        parts.push(format_duration_secs(duration));
+    }
+
+    parts.push(meta.confidence.label().to_string());
+
+    if let Some(source) = meta.source.as_deref() {
+        parts.push(source.to_string());
+    }
+
+    parts.join(" | ")
+}
+
+fn format_duration_secs(duration_secs: u32) -> String {
+    let minutes = duration_secs / 60;
+    let seconds = duration_secs % 60;
+    format!("{minutes}:{seconds:02}")
+}
+
 fn render_youtube_results(frame: &mut Frame, area: Rect, app: &AppState) {
     let kind_label = match app.youtube.search_kind {
         crate::youtube::SearchKind::Song => "Songs",
@@ -857,11 +888,14 @@ fn render_youtube_results(frame: &mut Frame, area: Rect, app: &AppState) {
         .map(|(i, result)| {
             let is_selected = i == app.youtube.selected;
 
-            let title_str = truncate_middle(&result.title, inner_width.saturating_sub(16));
-            let count_tag = result
-                .track_count
-                .map(|n| format!("  {n} tracks"))
-                .unwrap_or_default();
+            let title_str = truncate_middle(result.display_title(), inner_width.saturating_sub(16));
+            let count_tag = match result.kind {
+                crate::youtube::SearchKind::Song => String::new(),
+                _ => result
+                    .track_count
+                    .map(|n| format!("  {n} tracks"))
+                    .unwrap_or_default(),
+            };
 
             let title_style = if is_selected {
                 Style::default()
@@ -878,16 +912,62 @@ fn render_youtube_results(frame: &mut Frame, area: Rect, app: &AppState) {
                 Span::styled(count_tag, Style::default().fg(MUTED)),
             ]);
 
-            let subtitle = result.subtitle.as_deref().unwrap_or("").to_string();
-            let sub = Line::from(vec![
-                Span::raw("     "),
-                Span::styled(
-                    truncate_middle(&subtitle, inner_width.saturating_sub(6)),
-                    Style::default().fg(SUBTLE),
-                ),
-            ]);
+            match result.kind {
+                crate::youtube::SearchKind::Song => {
+                    let identity = result
+                        .song_metadata
+                        .as_ref()
+                        .and_then(format_song_identity_line)
+                        .or_else(|| result.subtitle.clone())
+                        .unwrap_or_default();
+                    let meta_line = result
+                        .song_metadata
+                        .as_ref()
+                        .map(format_song_meta_line)
+                        .unwrap_or_else(|| "Low confidence".to_string());
 
-            ListItem::new(vec![top, sub])
+                    let identity_line = Line::from(vec![
+                        Span::raw("     "),
+                        Span::styled(
+                            truncate_middle(&identity, inner_width.saturating_sub(6)),
+                            Style::default().fg(SUBTLE),
+                        ),
+                    ]);
+
+                    let meta_style = match result.song_metadata.as_ref().map(|meta| meta.confidence)
+                    {
+                        Some(crate::youtube::SongConfidence::High) => {
+                            Style::default().fg(Color::Rgb(102, 187, 106))
+                        }
+                        Some(crate::youtube::SongConfidence::Medium) => {
+                            Style::default().fg(Color::Rgb(230, 190, 92))
+                        }
+                        _ => Style::default().fg(MUTED),
+                    };
+
+                    let meta_detail_line = Line::from(vec![
+                        Span::raw("     "),
+                        Span::styled(
+                            truncate_middle(&meta_line, inner_width.saturating_sub(6)),
+                            meta_style,
+                        ),
+                    ]);
+
+                    ListItem::new(vec![top, identity_line, meta_detail_line])
+                }
+                _ => {
+                    let subtitle = result.subtitle.as_deref().unwrap_or("").to_string();
+                    let sub = Line::from(vec![
+                        Span::raw("     "),
+                        Span::styled(
+                            truncate_middle(&subtitle, inner_width.saturating_sub(6)),
+                            Style::default().fg(SUBTLE),
+                        ),
+                    ]);
+
+                    ListItem::new(vec![top, sub])
+                }
+            }
         })
         .collect();
 
@@ -1614,6 +1694,7 @@ fn render_download_queue(frame: &mut Frame, area: Rect, app: &AppState) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::youtube::{SongConfidence, YoutubeSongMetadata};
     use ratatui::layout::Rect;
 
     #[test]
@@ -1637,5 +1718,59 @@ mod tests {
         assert_eq!(rect.height, 32);
         assert_eq!(rect.x, 7);
         assert_eq!(rect.y, 4);
+    }
+
+    #[test]
+    fn formats_song_identity_line_with_artist_and_album() {
+        let meta = YoutubeSongMetadata {
+            track: Some("Spaceship".into()),
+            artist: Some("Kanye West, GLC, Consequence".into()),
+            artists: vec!["Kanye West".into(), "GLC".into(), "Consequence".into()],
+            album: Some("The College Dropout".into()),
+            duration_secs: Some(324),
+            source: Some("Kanye West".into()),
+            confidence: SongConfidence::High,
+        };
+
+        assert_eq!(
+            format_song_identity_line(&meta).as_deref(),
+            Some("Kanye West, GLC, Consequence | The College Dropout")
+        );
+    }
+
+    #[test]
+    fn formats_song_meta_line_with_duration_confidence_and_source() {
+        let meta = YoutubeSongMetadata {
+            track: Some("Spaceship".into()),
+            artist: Some("Kanye West, GLC, Consequence".into()),
+            artists: vec!["Kanye West".into(), "GLC".into(), "Consequence".into()],
+            album: Some("The College Dropout".into()),
+            duration_secs: Some(324),
+            source: Some("Kanye West".into()),
+            confidence: SongConfidence::High,
+        };
+
+        assert_eq!(
+            format_song_meta_line(&meta),
+            "5:24 | High confidence | Kanye West"
+        );
+    }
+
+    #[test]
+    fn formats_song_meta_line_for_low_confidence_creator_upload() {
+        let meta = YoutubeSongMetadata {
+            track: Some("Kanye West - Spaceship (High Quality)".into()),
+            artist: None,
+            artists: Vec::new(),
+            album: None,
+            duration_secs: Some(325),
+            source: Some("Red System Of U Day".into()),
+            confidence: SongConfidence::Low,
+        };
+
+        assert_eq!(
+            format_song_meta_line(&meta),
+            "5:25 | Low confidence | Red System Of U Day"
+        );
     }
 }
