@@ -151,7 +151,7 @@ pub fn search_albums(
         .filter_map(|h| h.join().ok().flatten())
         .collect();
 
-    results.sort_by(|a, b| a.title.to_lowercase().cmp(&b.title.to_lowercase()));
+    results.sort_by_key(|a| a.title.to_lowercase());
     Ok(results)
 }
 
