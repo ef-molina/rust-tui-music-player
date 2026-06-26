@@ -41,6 +41,7 @@ pub enum AppEvent {
     VolumeUp,
     VolumeDown,
     ToggleDownloadQueue,
+    CloseDownloadQueue,
     CancelDownload,
 
     /// Switch focus to diffent panes.
