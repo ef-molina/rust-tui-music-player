@@ -151,7 +151,7 @@ pub fn search_albums(
         .filter_map(|h| h.join().ok().flatten())
         .collect();
 
-    results.sort_by(|a, b| a.title.to_lowercase().cmp(&b.title.to_lowercase()));
+    results.sort_by_key(|a| a.title.to_lowercase());
     Ok(results)
 }
 
@@ -290,6 +290,63 @@ fn fetch_artist_details(url: String, browser: &str) -> Option<YoutubeResult> {
         subtitle,
         track_count: None,
     })
+}
+
+// ---------------------------------------------------------------------------
+// Search spawning (mutates AppState, spawns background thread)
+// ---------------------------------------------------------------------------
+
+/// Start a YouTube search of the given kind at the given page.
+/// Resets results when page == 0; appends when page > 0 (load-more).
+pub fn spawn_youtube_search(
+    app: &mut crate::app::AppState,
+    query: String,
+    kind: SearchKind,
+    page: usize,
+) {
+    use crate::app::{FocusPane, StatusLevel};
+    use crate::event::jobs::JobResult;
+
+    if page == 0 {
+        app.youtube.results.clear();
+        app.youtube.selected = 0;
+    }
+    app.youtube.searching = true;
+    app.youtube.search_kind = kind;
+    app.youtube.page = page;
+    app.youtube.query = query.clone();
+    app.youtube.has_more = false;
+    app.ui.focus = FocusPane::YoutubeResults;
+
+    let label = match kind {
+        SearchKind::Song => "songs",
+        SearchKind::Album => "albums",
+        SearchKind::Artist => "artists",
+    };
+    app.set_status(
+        StatusLevel::Info,
+        format!("Searching {label} for \"{query}\"…"),
+        None,
+    );
+
+    let tx = app.channels.jobs_tx.clone();
+    let browser = app.browser.clone();
+    std::thread::spawn(move || {
+        let result = match kind {
+            SearchKind::Song => search_songs(&query, page, &browser),
+            SearchKind::Album => search_albums(&query, page, &browser),
+            SearchKind::Artist => search_artists(&query, page, &browser),
+        };
+        match result {
+            Ok(results) => {
+                let has_more = results.len() >= PAGE_SIZE;
+                let _ = tx.send(JobResult::YoutubeSearchDone { results, has_more });
+            }
+            Err(e) => {
+                let _ = tx.send(JobResult::YoutubeSearchFailed(e));
+            }
+        }
+    });
 }
 
 // ---------------------------------------------------------------------------

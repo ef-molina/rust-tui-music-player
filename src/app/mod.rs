@@ -13,6 +13,9 @@
 //! mutates it.
 //!
 
+pub mod navigation;
+pub mod search_helpers;
+
 use crate::event::jobs::JobResult;
 use crate::lyrics::LyricsState;
 use crate::lyrics_fetch::LyricsFetchResult;
@@ -193,111 +196,139 @@ pub struct NavigationState {
     pub album_selected: usize,
 }
 
-pub struct AppState {
-    /// Root directory of the file browser
-    pub root_dir: PathBuf,
+pub struct PlaybackState {
+    pub now_playing: Option<NowPlaying>,
+    pub repeat_mode: RepeatMode,
+    pub shuffle: bool,
+}
 
-    /// Current directory in the file browser
-    pub current_dir: PathBuf,
+impl Default for PlaybackState {
+    fn default() -> Self {
+        Self {
+            now_playing: None,
+            repeat_mode: RepeatMode::Off,
+            shuffle: false,
+        }
+    }
+}
 
-    /// Index of the currently selected browser entry
-    pub selected_index: usize,
+pub struct LyricsManager {
+    pub status: LyricsStatus,
+    pub scroll: usize,
+    pub request_id: u64,
+    pub negative_cache: HashSet<LyricsCacheKey>,
+    pub pending_cache_key: Option<LyricsCacheKey>,
+}
 
-    /// List of entries in the current directory
-    pub browser_entries: Vec<BrowserEntry>,
+impl Default for LyricsManager {
+    fn default() -> Self {
+        Self {
+            status: LyricsStatus::None,
+            scroll: 0,
+            request_id: 0,
+            negative_cache: HashSet::new(),
+            pending_cache_key: None,
+        }
+    }
+}
 
-    /// Which pane currently has focus
-    pub focus: FocusPane,
+#[derive(Default)]
+pub struct DownloadManager {
+    pub active_url: Option<String>,
+    pub active_progress: Option<DownloadState>,
+    pub active_pid: Option<u32>,
+    pub jobs: Vec<DownloadJob>,
+    pub show_queue: bool,
+}
 
-    /// Directory of active album/playlist
-    pub active_album_dir: Option<PathBuf>,
+pub struct YoutubeState {
+    pub results: Vec<YoutubeResult>,
+    pub selected: usize,
+    pub searching: bool,
+    pub search_kind: SearchKind,
+    pub page: usize,
+    pub query: String,
+    pub has_more: bool,
+}
 
-    /// Tracks shown in album/playlist view
-    pub album_entries: Vec<BrowserEntry>,
+impl Default for YoutubeState {
+    fn default() -> Self {
+        Self {
+            results: Vec::new(),
+            selected: 0,
+            searching: false,
+            search_kind: SearchKind::Song,
+            page: 0,
+            query: String::new(),
+            has_more: false,
+        }
+    }
+}
 
-    /// Index of the currently selected album entry
-    pub album_selected: usize,
-
-    /// State for synced lyrics
-    pub lyrics: LyricsStatus,
-    pub lyric_scroll: usize,
-
-    /// UI tick used for render-time effects (like blinking cursor, marquee, etc)
+pub struct UiState {
     pub ui_tick: u64,
     pub selection_anchor_tick: u64,
+    pub focus: FocusPane,
+    pub input_mode: InputMode,
+    pub status_message: Option<StatusMessage>,
+}
 
-    /// Sender and receiver for background lyrics fetch results
+pub struct Channels {
     pub lyrics_rx: Receiver<LyricsFetchResult>,
     pub lyrics_tx: Sender<LyricsFetchResult>,
+    pub search_rx: Receiver<SearchMessage>,
+    pub search_tx: Sender<SearchMessage>,
+    pub jobs_rx: Receiver<JobResult>,
+    pub jobs_tx: Sender<JobResult>,
+}
 
-    /// Monotonically increasing request ID for lyrics fetches
-    pub lyrics_request_id: u64,
+#[derive(Default)]
+pub struct AlbumState {
+    pub dir: Option<PathBuf>,
+    pub entries: Vec<BrowserEntry>,
+    pub selected: usize,
+}
 
-    /// In-memory negative cache for tracks known to have no synced lyrics
-    pub lyrics_negative_cache: HashSet<LyricsCacheKey>,
+pub struct BrowserState {
+    pub root_dir: PathBuf,
+    pub current_dir: PathBuf,
+    pub selected_index: usize,
+    pub entries: Vec<BrowserEntry>,
+}
 
-    /// Cache key associated with the currently in-flight lyrics request
-    pub lyrics_pending_cache_key: Option<LyricsCacheKey>,
+pub struct AppState {
+    /// File browser state
+    pub browser_state: BrowserState,
+
+    /// UI state (focus, input mode, tick counters, status message)
+    pub ui: UiState,
+
+    /// Album/playlist state
+    pub album: AlbumState,
+
+    /// Lyrics state (status, scroll, caching, request tracking)
+    pub lyrics_state: LyricsManager,
+
+    /// Channel handles for background work (lyrics, search, downloads)
+    pub channels: Channels,
 
     /// Playback state and mpv integration
     pub player: Player,
 
-    /// Currently playing track information
-    pub now_playing: Option<NowPlaying>,
-
-    /// Current input mode (normal vs command)
-    pub input_mode: InputMode,
+    /// Playback metadata (now playing, repeat, shuffle)
+    pub playback: PlaybackState,
 
     /// Search query, results, and last pre-search browser context
     pub search: SearchState,
 
-    /// Receiver and sender for background search indexing
-    pub search_rx: Receiver<SearchMessage>,
-    pub search_tx: Sender<SearchMessage>,
-
-    /// Background job results (downloads, normalization, etc.)
-    pub jobs_rx: Receiver<JobResult>,
-    pub jobs_tx: Sender<JobResult>,
-
-    /// Transient statusline message for background activity and feedback
-    pub status_message: Option<StatusMessage>,
-
-    /// Active download URL for long-running job visibility
-    pub active_download_url: Option<String>,
-
-    /// Live download progress shown in the footer
-    pub active_download: Option<DownloadState>,
-
-    /// PID of the active yt-dlp process (used for cancellation)
-    pub active_download_pid: Option<u32>,
-
-    /// Rolling history of all download jobs (capped at 20)
-    pub download_jobs: Vec<DownloadJob>,
-
-    /// Whether the download queue overlay is visible
-    pub show_download_queue: bool,
+    /// Download state (active download, job queue, overlay visibility)
+    pub downloads: DownloadManager,
 
     /// Bounded history of previous navigation states
     pub navigation_history: Vec<NavigationState>,
 
-    /// YouTube search results
-    pub youtube_results: Vec<YoutubeResult>,
-    pub youtube_selected: usize,
-    /// True while a background YouTube search thread is running
-    pub youtube_searching: bool,
-    /// Which type of search produced the current results
-    pub youtube_search_kind: SearchKind,
-    /// 0-based page number of the currently loaded results
-    pub youtube_page: usize,
-    /// The query that produced the current results (used for load-more)
-    pub youtube_query: String,
-    /// True if the last search returned a full page (more may exist)
-    pub youtube_has_more: bool,
-
-    /// Playback repeat mode
-    pub repeat_mode: RepeatMode,
-    /// True when shuffle is active
-    pub shuffle: bool,
+    /// YouTube search state
+    pub youtube: YoutubeState,
 
     /// Browser yt-dlp reads cookies from (from config)
     pub browser: String,
@@ -330,68 +361,41 @@ impl RepeatMode {
 
 impl AppState {
     /// Create a new application state from a loaded config.
-    pub fn new(
-        cfg: &crate::config::Config,
-        lyrics_rx: Receiver<LyricsFetchResult>,
-        lyrics_tx: Sender<LyricsFetchResult>,
-        search_rx: Receiver<SearchMessage>,
-        search_tx: Sender<SearchMessage>,
-        jobs_rx: Receiver<JobResult>,
-        jobs_tx: Sender<JobResult>,
-    ) -> Self {
+    pub fn new(cfg: &crate::config::Config, channels: Channels) -> Self {
         let root_dir = cfg.music_root_path();
 
         Self {
-            root_dir: root_dir.clone(),
-            current_dir: root_dir.clone(),
-            browser_entries: Vec::new(),
-            selected_index: 0,
-            focus: FocusPane::Browser,
-            active_album_dir: None,
-            album_entries: Vec::new(),
-            album_selected: 0,
+            browser_state: BrowserState {
+                root_dir: root_dir.clone(),
+                current_dir: root_dir.clone(),
+                selected_index: 0,
+                entries: Vec::new(),
+            },
+            ui: UiState {
+                focus: FocusPane::Browser,
+                input_mode: InputMode::Normal,
+                ui_tick: 0,
+                selection_anchor_tick: 0,
+                status_message: None,
+            },
+            album: AlbumState::default(),
             player: Player::new(),
-            lyrics: LyricsStatus::None,
-            lyric_scroll: 0,
-            lyrics_request_id: 0,
-            lyrics_negative_cache: HashSet::new(),
-            lyrics_pending_cache_key: None,
-            lyrics_rx,
-            lyrics_tx,
-            jobs_rx,
-            jobs_tx,
-            ui_tick: 0,
-            selection_anchor_tick: 0,
-            now_playing: None,
-            input_mode: InputMode::Normal,
+            lyrics_state: LyricsManager::default(),
+            channels,
+            playback: PlaybackState::default(),
             search: SearchState::new(root_dir.clone(), 0),
-            search_rx,
-            search_tx,
-            status_message: None,
-            active_download_url: None,
-            active_download: None,
-            active_download_pid: None,
-            download_jobs: Vec::new(),
-            show_download_queue: false,
+            downloads: DownloadManager::default(),
             navigation_history: Vec::new(),
-            youtube_results: Vec::new(),
-            youtube_selected: 0,
-            youtube_searching: false,
-            youtube_search_kind: SearchKind::Song,
-            youtube_page: 0,
-            youtube_query: String::new(),
-            youtube_has_more: false,
-            repeat_mode: RepeatMode::Off,
-            shuffle: false,
+            youtube: YoutubeState::default(),
             browser: cfg.browser.clone(),
         }
     }
 
     pub fn clear_playback(&mut self) {
         self.player.stop();
-        self.lyrics = LyricsStatus::None;
-        self.now_playing = None;
-        self.lyric_scroll = 0;
+        self.lyrics_state.status = LyricsStatus::None;
+        self.playback.now_playing = None;
+        self.lyrics_state.scroll = 0;
     }
 
     pub fn set_status(
@@ -400,32 +404,33 @@ impl AppState {
         text: impl Into<String>,
         ttl_ticks: Option<u64>,
     ) {
-        self.status_message = Some(StatusMessage {
+        self.ui.status_message = Some(StatusMessage {
             level,
             text: text.into(),
-            expires_at_tick: ttl_ticks.map(|ttl| self.ui_tick.saturating_add(ttl)),
+            expires_at_tick: ttl_ticks.map(|ttl| self.ui.ui_tick.saturating_add(ttl)),
         });
     }
 
     pub fn clear_expired_status(&mut self) {
         if self
+            .ui
             .status_message
             .as_ref()
             .and_then(|status| status.expires_at_tick)
-            .is_some_and(|expires_at| self.ui_tick >= expires_at)
+            .is_some_and(|expires_at| self.ui.ui_tick >= expires_at)
         {
-            self.status_message = None;
+            self.ui.status_message = None;
         }
     }
 
     pub fn current_navigation_state(&self) -> NavigationState {
         NavigationState {
-            focus: self.focus,
-            current_dir: self.current_dir.clone(),
-            selected_index: self.selected_index,
-            active_album_dir: self.active_album_dir.clone(),
-            album_entries: self.album_entries.clone(),
-            album_selected: self.album_selected,
+            focus: self.ui.focus,
+            current_dir: self.browser_state.current_dir.clone(),
+            selected_index: self.browser_state.selected_index,
+            active_album_dir: self.album.dir.clone(),
+            album_entries: self.album.entries.clone(),
+            album_selected: self.album.selected,
         }
     }
 }
