@@ -72,6 +72,16 @@ pub fn pop_navigation_history(app: &mut AppState) -> bool {
     false
 }
 
+pub fn navigate_back(app: &mut AppState) -> bool {
+    match app.ui.focus {
+        FocusPane::Album | FocusPane::Lyrics | FocusPane::YoutubeResults => {
+            app.ui.focus = FocusPane::Browser;
+            true
+        }
+        FocusPane::Browser => pop_navigation_history(app),
+    }
+}
+
 pub fn restore_search_context(app: &mut AppState) {
     load_browser_dir(app, app.search.last_browser_dir.clone());
     let dir_count = app
@@ -156,7 +166,10 @@ pub fn jump_to_track_path(app: &mut AppState, track_path: &std::path::Path) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::BrowserEntry;
+    use std::fs;
     use std::sync::mpsc::channel;
+    use tempfile::tempdir;
 
     fn test_app() -> AppState {
         let (lyrics_tx, lyrics_rx) = channel();
@@ -205,5 +218,87 @@ mod tests {
                 NAVIGATION_HISTORY_LIMIT + 4
             )))
         );
+    }
+
+    #[test]
+    fn navigate_back_from_album_returns_to_browser_without_clearing_album() {
+        let mut app = test_app();
+        app.ui.focus = FocusPane::Album;
+        app.album.dir = Some(PathBuf::from("/tmp/root/Album"));
+        app.album.entries = vec![BrowserEntry {
+            name: "track.opus".into(),
+            is_dir: false,
+        }];
+        app.album.selected = 0;
+        app.navigation_history.push(NavigationState {
+            focus: FocusPane::Browser,
+            current_dir: PathBuf::from("/tmp/root"),
+            selected_index: 0,
+            active_album_dir: None,
+            album_entries: Vec::new(),
+            album_selected: 0,
+        });
+
+        assert!(navigate_back(&mut app));
+        assert_eq!(app.ui.focus, FocusPane::Browser);
+        assert_eq!(app.album.dir, Some(PathBuf::from("/tmp/root/Album")));
+        assert_eq!(
+            app.album.entries,
+            vec![BrowserEntry {
+                name: "track.opus".into(),
+                is_dir: false,
+            }]
+        );
+        assert_eq!(app.navigation_history.len(), 1);
+    }
+
+    #[test]
+    fn navigate_back_from_lyrics_returns_to_browser_without_clearing_album() {
+        let mut app = test_app();
+        app.ui.focus = FocusPane::Lyrics;
+        app.album.dir = Some(PathBuf::from("/tmp/root/Album"));
+        app.album.entries = vec![BrowserEntry {
+            name: "track.opus".into(),
+            is_dir: false,
+        }];
+        app.album.selected = 0;
+
+        assert!(navigate_back(&mut app));
+        assert_eq!(app.ui.focus, FocusPane::Browser);
+        assert_eq!(app.album.dir, Some(PathBuf::from("/tmp/root/Album")));
+        assert_eq!(app.album.entries.len(), 1);
+        assert_eq!(app.album.entries[0].name, "track.opus");
+    }
+
+    #[test]
+    fn navigate_back_from_youtube_results_still_returns_to_browser() {
+        let mut app = test_app();
+        app.ui.focus = FocusPane::YoutubeResults;
+
+        assert!(navigate_back(&mut app));
+        assert_eq!(app.ui.focus, FocusPane::Browser);
+    }
+
+    #[test]
+    fn navigate_back_from_browser_still_restores_navigation_history() {
+        let mut app = test_app();
+        let tmp = tempdir().unwrap();
+        let root = tmp.path();
+        let nested = root.join("nested");
+
+        fs::create_dir(root.join("albums")).unwrap();
+        fs::create_dir(&nested).unwrap();
+
+        app.browser_state.root_dir = root.to_path_buf();
+        load_browser_dir(&mut app, root.to_path_buf());
+        app.browser_state.selected_index = 0;
+        push_navigation_history(&mut app);
+
+        load_browser_dir(&mut app, nested);
+
+        assert!(navigate_back(&mut app));
+        assert_eq!(app.ui.focus, FocusPane::Browser);
+        assert_eq!(app.browser_state.current_dir, root);
+        assert_eq!(app.browser_state.selected_index, 0);
     }
 }

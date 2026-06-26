@@ -32,7 +32,7 @@ mod ui;
 mod youtube;
 
 use crate::app::navigation::{
-    jump_to_track_path, pop_navigation_history, push_navigation_history, restore_search_context,
+    jump_to_track_path, navigate_back, push_navigation_history, restore_search_context,
 };
 use crate::app::search_helpers::{merge_search_entries, refresh_search_results};
 use crate::event::commands::{Command, active_command_spec, parse_command, top_command_spec};
@@ -970,9 +970,7 @@ fn run_app() -> std::io::Result<()> {
 
                     // -----------------------------------------------------------------
                     AppEvent::NavigateBack => {
-                        if app.ui.focus == FocusPane::YoutubeResults {
-                            app.ui.focus = FocusPane::Browser;
-                        } else if !pop_navigation_history(&mut app) {
+                        if !navigate_back(&mut app) {
                             app.set_status(StatusLevel::Info, "No previous view", Some(250));
                         }
                     }
