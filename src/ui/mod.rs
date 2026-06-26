@@ -259,7 +259,7 @@ fn wrap_text_to_width(text: &str, max_width: usize) -> Vec<String> {
 }
 
 fn mode_label(app: &AppState) -> &'static str {
-    match app.input_mode {
+    match app.ui.input_mode {
         InputMode::Normal => "Normal",
         InputMode::Command(_) => "Command",
         InputMode::Search => "Search",
@@ -267,7 +267,7 @@ fn mode_label(app: &AppState) -> &'static str {
 }
 
 fn focus_label(app: &AppState) -> &'static str {
-    match app.focus {
+    match app.ui.focus {
         FocusPane::Browser => "Browser",
         FocusPane::Album => "Tracks",
         FocusPane::Lyrics => "Lyrics",
@@ -284,7 +284,7 @@ fn playback_badge(app: &AppState) -> (&'static str, Color) {
 }
 
 fn lyrics_title(app: &AppState) -> &'static str {
-    match app.lyrics {
+    match app.lyrics_state.status {
         LyricsStatus::Loading => "[L]yrics · Loading",
         LyricsStatus::None => "[L]yrics · Unavailable",
         LyricsStatus::Loaded(_) => "[L]yrics · Synced",
@@ -301,11 +301,11 @@ fn status_level_color(level: StatusLevel) -> Color {
 }
 
 fn current_status(app: &AppState) -> (StatusLevel, String) {
-    if let Some(status) = &app.status_message {
+    if let Some(status) = &app.ui.status_message {
         return (status.level, status.text.clone());
     }
 
-    if let Some(url) = &app.active_download_url {
+    if let Some(url) = &app.downloads.active_url {
         return (
             StatusLevel::Info,
             format!("Downloading media from {}", truncate_middle(url, 56)),
@@ -328,7 +328,7 @@ fn current_status(app: &AppState) -> (StatusLevel, String) {
         SearchStatus::Idle | SearchStatus::Ready => {}
     }
 
-    match app.lyrics {
+    match app.lyrics_state.status {
         LyricsStatus::Loading => (StatusLevel::Info, "Fetching lyrics…".to_string()),
         LyricsStatus::Loaded(_) => (StatusLevel::Success, "Lyrics synced".to_string()),
         LyricsStatus::None if !app.search.index_entries.is_empty() => (
@@ -343,10 +343,10 @@ fn current_status(app: &AppState) -> (StatusLevel, String) {
 }
 
 fn render_command_bar(frame: &mut Frame, area: Rect, app: &AppState) {
-    let cursor_visible = (app.ui_tick / 25).is_multiple_of(2);
+    let cursor_visible = (app.ui.ui_tick / 25).is_multiple_of(2);
     let cursor = if cursor_visible { '█' } else { ' ' };
 
-    let (title, prefix, buffer, cursor_index) = match &app.input_mode {
+    let (title, prefix, buffer, cursor_index) = match &app.ui.input_mode {
         InputMode::Command(cmd) => {
             let title = if let Some(spec) = active_command_spec(&cmd.buffer) {
                 format!("Command · Active: {}", spec.name)
@@ -369,7 +369,7 @@ fn render_command_bar(frame: &mut Frame, area: Rect, app: &AppState) {
         InputMode::Normal => return,
     };
 
-    if matches!(app.input_mode, InputMode::Command(_)) {
+    if matches!(app.ui.input_mode, InputMode::Command(_)) {
         render_command_text_bar(frame, area, &title, prefix, buffer, cursor_index, cursor);
     } else {
         render_text_bar(frame, area, &title, prefix, buffer, cursor_index, cursor);
@@ -447,7 +447,7 @@ fn render_command_text_bar(
 }
 
 fn render_command_helper(frame: &mut Frame, area: Rect, app: &AppState) {
-    let query = match &app.input_mode {
+    let query = match &app.ui.input_mode {
         InputMode::Command(cmd) => cmd.buffer.as_str(),
         _ => return,
     };
@@ -560,8 +560,8 @@ fn render_search_results_content(frame: &mut Frame, area: Rect, app: &AppState) 
                 marquee_text(
                     &primary,
                     primary_width,
-                    app.ui_tick,
-                    app.selection_anchor_tick,
+                    app.ui.ui_tick,
+                    app.ui.selection_anchor_tick,
                 )
             } else {
                 truncate_middle(&primary, primary_width)
@@ -637,7 +637,7 @@ fn render_search_picker(frame: &mut Frame, area: Rect, app: &AppState) {
         "/",
         app.search.query.as_str(),
         app.search.cursor,
-        if (app.ui_tick / 25).is_multiple_of(2) {
+        if (app.ui.ui_tick / 25).is_multiple_of(2) {
             '█'
         } else {
             ' '
@@ -652,12 +652,14 @@ fn render_search_picker(frame: &mut Frame, area: Rect, app: &AppState) {
 // -----------------------------------------------------------------------------
 fn render_browser(frame: &mut Frame, area: Rect, app: &AppState) {
     let dir_count = app
-        .browser_entries
+        .browser_state
+        .entries
         .iter()
         .filter(|entry| entry.is_dir)
         .count();
     let items: Vec<ListItem> = app
-        .browser_entries
+        .browser_state
+        .entries
         .iter()
         .enumerate()
         .filter(|(_, e)| e.is_dir)
@@ -665,11 +667,17 @@ fn render_browser(frame: &mut Frame, area: Rect, app: &AppState) {
             let display = display_album_name(&e.name);
             let available = area.width.saturating_sub(6) as usize;
 
-            let name = if app.focus == FocusPane::Browser && i == app.selected_index {
-                marquee_text(display, available, app.ui_tick, app.selection_anchor_tick)
-            } else {
-                display.to_string()
-            };
+            let name =
+                if app.ui.focus == FocusPane::Browser && i == app.browser_state.selected_index {
+                    marquee_text(
+                        display,
+                        available,
+                        app.ui.ui_tick,
+                        app.ui.selection_anchor_tick,
+                    )
+                } else {
+                    display.to_string()
+                };
 
             ListItem::new(format!("📁 {}", name))
         })
@@ -678,7 +686,7 @@ fn render_browser(frame: &mut Frame, area: Rect, app: &AppState) {
     let block = Block::default()
         .title(format!("[B]rowser · {dir_count}"))
         .borders(Borders::ALL)
-        .border_style(pane_border_style(app.focus == FocusPane::Browser));
+        .border_style(pane_border_style(app.ui.focus == FocusPane::Browser));
 
     let list = List::new(items)
         .block(block)
@@ -686,7 +694,7 @@ fn render_browser(frame: &mut Frame, area: Rect, app: &AppState) {
         .highlight_symbol("➤ ");
 
     let mut state = ListState::default();
-    state.select(Some(app.selected_index));
+    state.select(Some(app.browser_state.selected_index));
     frame.render_stateful_widget(list, area, &mut state);
 }
 
@@ -694,13 +702,13 @@ fn render_browser(frame: &mut Frame, area: Rect, app: &AppState) {
 // Album / Playlist renderer
 // -----------------------------------------------------------------------------
 fn render_album(frame: &mut Frame, area: Rect, app: &AppState) {
-    let (title, tracks) = if let Some(dir) = &app.active_album_dir {
+    let (title, tracks) = if let Some(dir) = &app.album.dir {
         (
             dir.file_name()
                 .and_then(|s| s.to_str())
                 .unwrap_or("[T]racks")
                 .to_string(),
-            &app.album_entries,
+            &app.album.entries,
         )
     } else {
         ("[T]racks".to_string(), &Vec::new())
@@ -731,12 +739,12 @@ fn render_album(frame: &mut Frame, area: Rect, app: &AppState) {
             let display_name = display_track_name(&e.name);
             let available = area.width.saturating_sub(6) as usize;
 
-            let name = if app.focus == FocusPane::Album && i == app.album_selected {
+            let name = if app.ui.focus == FocusPane::Album && i == app.album.selected {
                 marquee_text(
                     &display_name,
                     available,
-                    app.ui_tick,
-                    app.selection_anchor_tick,
+                    app.ui.ui_tick,
+                    app.ui.selection_anchor_tick,
                 )
             } else {
                 display_name
@@ -749,7 +757,7 @@ fn render_album(frame: &mut Frame, area: Rect, app: &AppState) {
     let block = Block::default()
         .title(format!("{title} · {}", tracks.len()))
         .borders(Borders::ALL)
-        .border_style(pane_border_style(app.focus == FocusPane::Album));
+        .border_style(pane_border_style(app.ui.focus == FocusPane::Album));
 
     if items.is_empty() {
         frame.render_widget(
@@ -766,7 +774,7 @@ fn render_album(frame: &mut Frame, area: Rect, app: &AppState) {
             .highlight_symbol("➤ ");
 
         let mut state = ListState::default();
-        state.select(Some(app.album_selected));
+        state.select(Some(app.album.selected));
         frame.render_stateful_widget(list, area, &mut state);
     }
 }
@@ -801,15 +809,15 @@ fn kind_badge(kind: crate::youtube::SearchKind) -> Span<'static> {
 }
 
 fn render_youtube_results(frame: &mut Frame, area: Rect, app: &AppState) {
-    let kind_label = match app.youtube_search_kind {
+    let kind_label = match app.youtube.search_kind {
         crate::youtube::SearchKind::Song => "Songs",
         crate::youtube::SearchKind::Album => "Albums",
         crate::youtube::SearchKind::Artist => "Artists",
     };
-    let title = if app.youtube_searching {
+    let title = if app.youtube.searching {
         format!(" {kind_label} — Searching… ")
     } else {
-        format!(" {kind_label} — {} result(s) ", app.youtube_results.len())
+        format!(" {kind_label} — {} result(s) ", app.youtube.results.len())
     };
 
     let block = Block::default()
@@ -817,7 +825,7 @@ fn render_youtube_results(frame: &mut Frame, area: Rect, app: &AppState) {
         .borders(Borders::ALL)
         .border_style(pane_border_style(true));
 
-    if app.youtube_searching && app.youtube_results.is_empty() {
+    if app.youtube.searching && app.youtube.results.is_empty() {
         frame.render_widget(
             Paragraph::new("Searching…")
                 .alignment(Alignment::Center)
@@ -828,7 +836,7 @@ fn render_youtube_results(frame: &mut Frame, area: Rect, app: &AppState) {
         return;
     }
 
-    if app.youtube_results.is_empty() {
+    if app.youtube.results.is_empty() {
         frame.render_widget(
             Paragraph::new("No results — try  :ss <song>  :salb <album>  :sa <artist>")
                 .alignment(Alignment::Center)
@@ -842,11 +850,12 @@ fn render_youtube_results(frame: &mut Frame, area: Rect, app: &AppState) {
     let inner_width = area.width.saturating_sub(6) as usize;
 
     let mut items: Vec<ListItem> = app
-        .youtube_results
+        .youtube
+        .results
         .iter()
         .enumerate()
         .map(|(i, result)| {
-            let is_selected = i == app.youtube_selected;
+            let is_selected = i == app.youtube.selected;
 
             let title_str = truncate_middle(&result.title, inner_width.saturating_sub(16));
             let count_tag = result
@@ -883,8 +892,8 @@ fn render_youtube_results(frame: &mut Frame, area: Rect, app: &AppState) {
         .collect();
 
     // Virtual "Load more" row at the end when more pages exist
-    if app.youtube_has_more {
-        let is_selected = app.youtube_selected == app.youtube_results.len();
+    if app.youtube.has_more {
+        let is_selected = app.youtube.selected == app.youtube.results.len();
         items.push(ListItem::new(Line::from(Span::styled(
             "  ↓  Load more…",
             if is_selected {
@@ -908,11 +917,11 @@ fn render_youtube_results(frame: &mut Frame, area: Rect, app: &AppState) {
         .highlight_symbol("▶ ");
 
     let mut state = ListState::default();
-    state.select(Some(app.youtube_selected));
+    state.select(Some(app.youtube.selected));
     frame.render_stateful_widget(list, area, &mut state);
 
     // Hint line at bottom — context-sensitive based on selected result kind
-    let hint_text = match app.youtube_results.get(app.youtube_selected) {
+    let hint_text = match app.youtube.results.get(app.youtube.selected) {
         Some(r) if r.kind == crate::youtube::SearchKind::Artist => {
             "Enter browse albums · Backspace back · ↑↓ move"
         }
@@ -937,9 +946,9 @@ fn render_lyrics_mini(frame: &mut Frame, area: Rect, app: &AppState) {
     let block = Block::default()
         .title(lyrics_title(app))
         .borders(Borders::ALL)
-        .border_style(pane_border_style(app.focus == FocusPane::Lyrics));
+        .border_style(pane_border_style(app.ui.focus == FocusPane::Lyrics));
 
-    let paragraph = match &app.lyrics {
+    let paragraph = match &app.lyrics_state.status {
         LyricsStatus::Loading => Paragraph::new("Loading lyrics…")
             .alignment(Alignment::Center)
             .style(muted_style())
@@ -1041,9 +1050,9 @@ fn render_lyrics_full(frame: &mut Frame, area: Rect, app: &AppState) {
     let block = Block::default()
         .title(lyrics_title(app))
         .borders(Borders::ALL)
-        .border_style(pane_border_style(app.focus == FocusPane::Lyrics));
+        .border_style(pane_border_style(app.ui.focus == FocusPane::Lyrics));
 
-    let paragraph = match &app.lyrics {
+    let paragraph = match &app.lyrics_state.status {
         LyricsStatus::Loading => Paragraph::new("Loading lyrics…")
             .alignment(Alignment::Center)
             .style(muted_style())
@@ -1063,7 +1072,7 @@ fn render_lyrics_full(frame: &mut Frame, area: Rect, app: &AppState) {
                     .style(muted_style())
                     .block(block)
             } else {
-                let logical_center = app.lyric_scroll.min(lines.len() - 1);
+                let logical_center = app.lyrics_state.scroll.min(lines.len() - 1);
 
                 let max_width = area.width.saturating_sub(2) as usize;
 
@@ -1118,7 +1127,7 @@ fn render_lyrics_full(frame: &mut Frame, area: Rect, app: &AppState) {
 fn render_statusline(frame: &mut Frame, area: Rect, app: &AppState) {
     let (level, message) = current_status(app);
     let color = status_level_color(level);
-    let right_text = match app.input_mode {
+    let right_text = match app.ui.input_mode {
         InputMode::Search => "Esc close  Enter play  ↑/↓ move",
         InputMode::Command(_) => "Enter run  Esc close",
         InputMode::Normal => "Backspace back  / search  : command",
@@ -1135,7 +1144,7 @@ fn render_statusline(frame: &mut Frame, area: Rect, app: &AppState) {
         .constraints([Constraint::Min(10), Constraint::Length(34)])
         .split(inner);
 
-    if let Some(dl) = &app.active_download {
+    if let Some(dl) = &app.downloads.active_progress {
         // Replace the status bar with a download progress bar
         let available = inner.width.saturating_sub(2) as usize;
         let label = format!(
@@ -1205,7 +1214,7 @@ pub fn draw(frame: &mut Frame, app: &AppState) {
     let size = frame.size();
     frame.render_widget(Clear, size);
 
-    let chunks = if matches!(app.input_mode, InputMode::Command(_)) {
+    let chunks = if matches!(app.ui.input_mode, InputMode::Command(_)) {
         Layout::default()
             .direction(Direction::Vertical)
             .constraints([
@@ -1231,8 +1240,9 @@ pub fn draw(frame: &mut Frame, app: &AppState) {
     // Header
     // -------------------------------------------------------------------------
     let path_display = app
+        .browser_state
         .current_dir
-        .strip_prefix(&app.root_dir)
+        .strip_prefix(&app.browser_state.root_dir)
         .ok()
         .and_then(|p| (!p.as_os_str().is_empty()).then_some(p))
         .map(|p| format!("~/{}", p.display()))
@@ -1296,7 +1306,7 @@ pub fn draw(frame: &mut Frame, app: &AppState) {
         ])
         .split(chunks[1]);
 
-    let (main_body_area, helper_area) = if matches!(app.input_mode, InputMode::Command(_)) {
+    let (main_body_area, helper_area) = if matches!(app.ui.input_mode, InputMode::Command(_)) {
         let available_height = body_chunks[1].height.saturating_sub(1);
         let helper_height = available_height.min(11);
 
@@ -1316,7 +1326,7 @@ pub fn draw(frame: &mut Frame, app: &AppState) {
     render_browser(frame, body_chunks[0], app);
 
     // Right pane layout depends on focus
-    let right_chunks = match app.focus {
+    let right_chunks = match app.ui.focus {
         FocusPane::Lyrics | FocusPane::YoutubeResults => Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Min(1)])
@@ -1331,7 +1341,7 @@ pub fn draw(frame: &mut Frame, app: &AppState) {
             .split(main_body_area),
     };
 
-    match app.focus {
+    match app.ui.focus {
         FocusPane::Lyrics => {
             render_lyrics_full(frame, right_chunks[0], app);
         }
@@ -1353,7 +1363,7 @@ pub fn draw(frame: &mut Frame, app: &AppState) {
     // -------------------------------------------------------------------------
 
     // If in command mode, we need to render the command bar above the statusline/footer
-    let footer_index = if matches!(app.input_mode, InputMode::Command(_)) {
+    let footer_index = if matches!(app.ui.input_mode, InputMode::Command(_)) {
         render_command_bar(frame, chunks[2], app);
         render_statusline(frame, chunks[3], app);
         4
@@ -1394,6 +1404,7 @@ pub fn draw(frame: &mut Frame, app: &AppState) {
 
     let title_width = footer_rows[0].width.saturating_sub(6) as usize;
     let track_label = app
+        .playback
         .now_playing
         .as_ref()
         .map(|n| n.title.trim())
@@ -1407,6 +1418,7 @@ pub fn draw(frame: &mut Frame, app: &AppState) {
         .unwrap_or_else(|| "Stopped".to_string());
 
     let secondary_label = app
+        .playback
         .now_playing
         .as_ref()
         .map(|n| match (n.artist.trim(), n.album.trim()) {
@@ -1439,12 +1451,16 @@ pub fn draw(frame: &mut Frame, app: &AppState) {
     );
 
     // Controls hint with live repeat/shuffle indicators
-    let repeat_label = match app.repeat_mode {
+    let repeat_label = match app.playback.repeat_mode {
         crate::app::RepeatMode::Off => "r off",
         crate::app::RepeatMode::Track => "r trk",
         crate::app::RepeatMode::Album => "r alb",
     };
-    let shuffle_label = if app.shuffle { "z shf" } else { "z ---" };
+    let shuffle_label = if app.playback.shuffle {
+        "z shf"
+    } else {
+        "z ---"
+    };
     let vol = app.player.volume;
     let controls = format!(
         "←/→ seek  < prev  > next   s stop   space pause   =/- vol:{vol}%   {repeat_label}  {shuffle_label}   d queue   x cancel   / search   : cmd   q quit"
@@ -1488,11 +1504,11 @@ pub fn draw(frame: &mut Frame, app: &AppState) {
         footer_rows[3],
     );
 
-    if matches!(app.input_mode, InputMode::Search) {
+    if matches!(app.ui.input_mode, InputMode::Search) {
         render_search_picker(frame, chunks[1], app);
     }
 
-    if app.show_download_queue {
+    if app.downloads.show_queue {
         let area = centered_rect(60, 70, frame.size());
         render_download_queue(frame, area, app);
     }
@@ -1508,7 +1524,7 @@ fn render_download_queue(frame: &mut Frame, area: Rect, app: &AppState) {
         .borders(Borders::ALL)
         .border_style(Style::default().fg(ACCENT).add_modifier(Modifier::BOLD));
 
-    if app.download_jobs.is_empty() {
+    if app.downloads.jobs.is_empty() {
         frame.render_widget(
             Paragraph::new("No downloads yet.")
                 .alignment(Alignment::Center)
@@ -1520,7 +1536,8 @@ fn render_download_queue(frame: &mut Frame, area: Rect, app: &AppState) {
     }
 
     let items: Vec<ListItem> = app
-        .download_jobs
+        .downloads
+        .jobs
         .iter()
         .rev()
         .map(|job| {

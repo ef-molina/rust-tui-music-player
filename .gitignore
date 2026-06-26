@@ -1,4 +1,5 @@
 /target
 .DS_Store
 debug.log
-sessions.claude/
+sessions/
+.claude/

@@ -206,7 +206,11 @@ fn normalize_artist(comment: Option<&str>, raw: &str, title: &str) -> (String, V
     // Handles "Dr. Dre, Hittman, Snoop Dogg" → "Dr. Dre".
     // The convention in music metadata is that the primary artist is listed first.
     let raw = raw.trim();
-    if let Some(primary) = raw.split(',').next().map(str::trim).filter(|s| !s.is_empty())
+    if let Some(primary) = raw
+        .split(',')
+        .next()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
         && !primary.ends_with("Music")
     {
         return (primary.to_string(), Vec::new());
@@ -476,7 +480,7 @@ mod tests {
     #[test]
     fn classify_auto_generated_album() {
         let dir = tempdir().unwrap();
-        let track = dummy_track(dir.path(), "EdEddnEddy [2BYqLgxoZRI].opus");
+        let _track = dummy_track(dir.path(), "EdEddnEddy [2BYqLgxoZRI].opus");
 
         // Fake minimal metadata by embedding it via exiftool is overkill here,
         // so for now this test only asserts classification logic *structure*.
@@ -599,7 +603,7 @@ mod tests {
             "Eminem",
             None,
             "Fuel",
-            &vec!["JID".into()],
+            &["JID".into()],
             TrackKind::OfficialAudioSingle,
             Some(2024),
             None,
@@ -620,7 +624,7 @@ mod tests {
             "JID",
             None,
             "Community",
-            &vec!["Clipse".into(), "Pusha T".into(), "Malice".into()],
+            &["Clipse".into(), "Pusha T".into(), "Malice".into()],
             TrackKind::OfficialVideo,
             Some(2025),
             None,
@@ -647,7 +651,7 @@ mod tests {
         fs::write(&src_file, b"test audio").unwrap();
 
         // Minimal metadata stub
-        let meta = crate::metadata::model::TrackMetadata {
+        let _meta = crate::metadata::model::TrackMetadata {
             album_artist: None,
             title: "Fuel (feat. JID)".into(),
             artist: "Eminem".into(),
@@ -667,7 +671,7 @@ mod tests {
             "Eminem",
             None,
             "Fuel",
-            &vec!["JID".into()],
+            &["JID".into()],
             TrackKind::OfficialAudioSingle,
             Some(2024),
             None,

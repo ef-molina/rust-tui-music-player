@@ -4,13 +4,14 @@
 //! - Parse .lrc files (timestamped lyrics)
 //! - Load lyrics for a given audio track path
 //! - Maintain a small state machine for current lyric line
+//! - Orchestrate lyrics loading on track change (orchestrator submodule)
 //!
 //! Design rules:
 //! - No UI logic
 //! - No mpv IPC
-//! - No AppState mutation (main.rs owns state)
 
 mod loader;
+pub mod orchestrator;
 mod parser;
 mod state;
 

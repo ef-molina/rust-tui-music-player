@@ -1,5 +1,7 @@
 //! Input handling module.
 
+pub mod text;
+
 use crate::app::InputMode;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use std::time::Duration;
