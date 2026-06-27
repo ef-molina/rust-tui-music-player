@@ -97,6 +97,7 @@ pub fn search_songs(query: &str, page: usize, browser: &str) -> Result<Vec<Youtu
     let entries = root["entries"].as_array().map(Vec::as_slice).unwrap_or(&[]);
     let mut results = collect_song_candidates(entries, skip, PAGE_SIZE);
     enrich_song_results(&mut results, browser);
+    rank_song_results(&mut results, query);
 
     Ok(results)
 }
@@ -383,6 +384,19 @@ fn enrich_song_results(results: &mut [YoutubeResult], browser: &str) {
     }
 }
 
+fn rank_song_results(results: &mut [YoutubeResult], query: &str) {
+    let normalized_query = normalize_search_text(query);
+    let query_terms = query_terms(&normalized_query);
+
+    results.sort_by(|left, right| {
+        song_rank_key(right, &normalized_query, &query_terms).cmp(&song_rank_key(
+            left,
+            &normalized_query,
+            &query_terms,
+        ))
+    });
+}
+
 fn fetch_song_metadata(url: &str, browser: &str) -> Option<YoutubeSongMetadata> {
     let output = Command::new("yt-dlp")
         .args([
@@ -465,6 +479,134 @@ fn score_song_confidence(meta: &YoutubeSongMetadata) -> SongConfidence {
     } else {
         SongConfidence::Low
     }
+}
+
+fn song_rank_key(
+    result: &YoutubeResult,
+    normalized_query: &str,
+    query_terms: &[String],
+) -> (u8, u8, u8, u8, u8, u8) {
+    let meta = result.song_metadata.as_ref();
+    let confidence = meta
+        .map(|meta| song_confidence_rank(meta.confidence))
+        .unwrap_or_else(|| song_confidence_rank(SongConfidence::Low));
+
+    (
+        confidence,
+        core_field_count(meta),
+        song_query_relevance(result, normalized_query, query_terms),
+        (!looks_like_creator_upload(meta)) as u8,
+        (!looks_like_noisy_song_result(result)) as u8,
+        has_sane_duration(meta) as u8,
+    )
+}
+
+fn song_confidence_rank(confidence: SongConfidence) -> u8 {
+    match confidence {
+        SongConfidence::High => 3,
+        SongConfidence::Medium => 2,
+        SongConfidence::Low => 1,
+    }
+}
+
+fn core_field_count(meta: Option<&YoutubeSongMetadata>) -> u8 {
+    let Some(meta) = meta else {
+        return 0;
+    };
+
+    let has_track = meta.track.as_deref().is_some_and(non_empty);
+    let has_artist = meta.artist.as_deref().is_some_and(non_empty) || !meta.artists.is_empty();
+    let has_album = meta.album.as_deref().is_some_and(non_empty);
+
+    [has_track, has_artist, has_album]
+        .into_iter()
+        .filter(|present| *present)
+        .count() as u8
+}
+
+fn song_query_relevance(
+    result: &YoutubeResult,
+    normalized_query: &str,
+    query_terms: &[String],
+) -> u8 {
+    if normalized_query.is_empty() {
+        return 0;
+    }
+
+    let Some(meta) = result.song_metadata.as_ref() else {
+        return 0;
+    };
+
+    let mut haystack_parts = vec![normalize_search_text(result.display_title())];
+
+    if let Some(track) = meta.track.as_deref() {
+        haystack_parts.push(normalize_search_text(track));
+    }
+    if let Some(artist) = meta.artist.as_deref() {
+        haystack_parts.push(normalize_search_text(artist));
+    }
+    if !meta.artists.is_empty() {
+        haystack_parts.push(normalize_search_text(&meta.artists.join(" ")));
+    }
+    if let Some(album) = meta.album.as_deref() {
+        haystack_parts.push(normalize_search_text(album));
+    }
+    if let Some(source) = meta.source.as_deref() {
+        haystack_parts.push(normalize_search_text(source));
+    }
+
+    let haystack = haystack_parts.join(" ");
+    let full_query_bonus = haystack.contains(normalized_query) as u8;
+    let term_hits = query_terms
+        .iter()
+        .filter(|term| haystack.contains(*term))
+        .count() as u8;
+
+    full_query_bonus.saturating_mul(2).saturating_add(term_hits)
+}
+
+fn looks_like_creator_upload(meta: Option<&YoutubeSongMetadata>) -> bool {
+    let Some(meta) = meta else {
+        return true;
+    };
+
+    let has_artist = meta.artist.as_deref().is_some_and(non_empty) || !meta.artists.is_empty();
+    let has_album = meta.album.as_deref().is_some_and(non_empty);
+    let has_source = meta.source.as_deref().is_some_and(non_empty);
+
+    !has_artist && !has_album && has_source
+}
+
+fn looks_like_noisy_song_result(result: &YoutubeResult) -> bool {
+    let title = normalize_search_text(result.display_title());
+
+    [
+        "high quality",
+        "lyrics",
+        "lyric video",
+        "live",
+        "live version",
+        "remix",
+    ]
+    .iter()
+    .any(|marker| title.contains(marker))
+}
+
+fn has_sane_duration(meta: Option<&YoutubeSongMetadata>) -> bool {
+    meta.and_then(|meta| meta.duration_secs)
+        .is_some_and(|duration| (90..=900).contains(&duration))
+}
+
+fn normalize_search_text(text: &str) -> String {
+    text.to_lowercase()
+}
+
+fn query_terms(normalized_query: &str) -> Vec<String> {
+    normalized_query
+        .split_whitespace()
+        .filter(|term| !term.is_empty())
+        .map(|term| term.to_string())
+        .collect()
 }
 
 fn get_string(value: &Value, key: &str) -> Option<String> {
@@ -569,6 +711,17 @@ pub fn spawn_youtube_search(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    fn test_song_result(url: &str, title: &str, meta: YoutubeSongMetadata) -> YoutubeResult {
+        YoutubeResult {
+            title: title.to_string(),
+            url: url.to_string(),
+            kind: SearchKind::Song,
+            subtitle: meta.artist.clone().or_else(|| meta.source.clone()),
+            track_count: None,
+            song_metadata: Some(meta),
+        }
+    }
 
     #[test]
     fn song_search_filters_to_watch_urls_only() {
@@ -684,5 +837,206 @@ mod tests {
         };
 
         assert_eq!(score_song_confidence(&meta), SongConfidence::Low);
+    }
+
+    #[test]
+    fn ranking_prefers_high_confidence_official_over_low_confidence_creator_upload() {
+        let mut results = vec![
+            test_song_result(
+                "https://example.com/creator",
+                "Spaceship (High Quality)",
+                YoutubeSongMetadata {
+                    track: Some("Spaceship (High Quality)".into()),
+                    artist: None,
+                    artists: Vec::new(),
+                    album: None,
+                    duration_secs: Some(325),
+                    source: Some("Red System Of U Day".into()),
+                    confidence: SongConfidence::Low,
+                },
+            ),
+            test_song_result(
+                "https://example.com/official",
+                "Spaceship",
+                YoutubeSongMetadata {
+                    track: Some("Spaceship".into()),
+                    artist: Some("Kanye West, GLC, Consequence".into()),
+                    artists: vec!["Kanye West".into(), "GLC".into(), "Consequence".into()],
+                    album: Some("The College Dropout".into()),
+                    duration_secs: Some(324),
+                    source: Some("Kanye West".into()),
+                    confidence: SongConfidence::High,
+                },
+            ),
+        ];
+
+        rank_song_results(&mut results, "spaceship kanye");
+
+        assert_eq!(results[0].url, "https://example.com/official");
+        assert_eq!(results[1].url, "https://example.com/creator");
+    }
+
+    #[test]
+    fn ranking_places_medium_confidence_between_high_and_low() {
+        let mut results = vec![
+            test_song_result(
+                "https://example.com/low",
+                "Spaceship (High Quality)",
+                YoutubeSongMetadata {
+                    track: Some("Spaceship (High Quality)".into()),
+                    artist: None,
+                    artists: Vec::new(),
+                    album: None,
+                    duration_secs: Some(325),
+                    source: Some("Red System Of U Day".into()),
+                    confidence: SongConfidence::Low,
+                },
+            ),
+            test_song_result(
+                "https://example.com/high",
+                "Spaceship",
+                YoutubeSongMetadata {
+                    track: Some("Spaceship".into()),
+                    artist: Some("Kanye West".into()),
+                    artists: vec!["Kanye West".into()],
+                    album: Some("The College Dropout".into()),
+                    duration_secs: Some(324),
+                    source: Some("Kanye West".into()),
+                    confidence: SongConfidence::High,
+                },
+            ),
+            test_song_result(
+                "https://example.com/medium",
+                "Spaceship",
+                YoutubeSongMetadata {
+                    track: Some("Spaceship".into()),
+                    artist: Some("Kanye West".into()),
+                    artists: vec!["Kanye West".into()],
+                    album: None,
+                    duration_secs: Some(324),
+                    source: Some("Kanye West".into()),
+                    confidence: SongConfidence::Medium,
+                },
+            ),
+        ];
+
+        rank_song_results(&mut results, "spaceship kanye");
+
+        assert_eq!(results[0].url, "https://example.com/high");
+        assert_eq!(results[1].url, "https://example.com/medium");
+        assert_eq!(results[2].url, "https://example.com/low");
+    }
+
+    #[test]
+    fn ranking_keeps_low_confidence_results_present() {
+        let mut results = vec![
+            test_song_result(
+                "https://example.com/low-a",
+                "Spaceship (High Quality)",
+                YoutubeSongMetadata {
+                    track: Some("Spaceship (High Quality)".into()),
+                    artist: None,
+                    artists: Vec::new(),
+                    album: None,
+                    duration_secs: Some(325),
+                    source: Some("Red System Of U Day".into()),
+                    confidence: SongConfidence::Low,
+                },
+            ),
+            test_song_result(
+                "https://example.com/low-b",
+                "Spaceship Lyrics",
+                YoutubeSongMetadata {
+                    track: Some("Spaceship Lyrics".into()),
+                    artist: None,
+                    artists: Vec::new(),
+                    album: None,
+                    duration_secs: Some(325),
+                    source: Some("Lyrics Channel".into()),
+                    confidence: SongConfidence::Low,
+                },
+            ),
+        ];
+
+        rank_song_results(&mut results, "spaceship kanye");
+
+        let urls: Vec<_> = results.iter().map(|result| result.url.as_str()).collect();
+        assert_eq!(urls.len(), 2);
+        assert!(urls.contains(&"https://example.com/low-a"));
+        assert!(urls.contains(&"https://example.com/low-b"));
+    }
+
+    #[test]
+    fn ranking_is_stable_for_equal_scores() {
+        let mut results = vec![
+            test_song_result(
+                "https://example.com/one",
+                "Track One",
+                YoutubeSongMetadata {
+                    track: Some("Track One".into()),
+                    artist: Some("Artist".into()),
+                    artists: vec!["Artist".into()],
+                    album: None,
+                    duration_secs: Some(300),
+                    source: Some("Artist".into()),
+                    confidence: SongConfidence::Medium,
+                },
+            ),
+            test_song_result(
+                "https://example.com/two",
+                "Track Two",
+                YoutubeSongMetadata {
+                    track: Some("Track Two".into()),
+                    artist: Some("Artist".into()),
+                    artists: vec!["Artist".into()],
+                    album: None,
+                    duration_secs: Some(300),
+                    source: Some("Artist".into()),
+                    confidence: SongConfidence::Medium,
+                },
+            ),
+        ];
+
+        rank_song_results(&mut results, "unrelated query");
+
+        assert_eq!(results[0].url, "https://example.com/one");
+        assert_eq!(results[1].url, "https://example.com/two");
+    }
+
+    #[test]
+    fn query_relevance_breaks_ties_when_confidence_matches() {
+        let mut results = vec![
+            test_song_result(
+                "https://example.com/other",
+                "Spaceship",
+                YoutubeSongMetadata {
+                    track: Some("Spaceship".into()),
+                    artist: Some("Other Artist".into()),
+                    artists: vec!["Other Artist".into()],
+                    album: Some("Loose Songs".into()),
+                    duration_secs: Some(324),
+                    source: Some("Other Artist".into()),
+                    confidence: SongConfidence::Medium,
+                },
+            ),
+            test_song_result(
+                "https://example.com/kanye",
+                "Spaceship",
+                YoutubeSongMetadata {
+                    track: Some("Spaceship".into()),
+                    artist: Some("Kanye West".into()),
+                    artists: vec!["Kanye West".into()],
+                    album: Some("Loose Songs".into()),
+                    duration_secs: Some(324),
+                    source: Some("Kanye West".into()),
+                    confidence: SongConfidence::Medium,
+                },
+            ),
+        ];
+
+        rank_song_results(&mut results, "spaceship kanye");
+
+        assert_eq!(results[0].url, "https://example.com/kanye");
+        assert_eq!(results[1].url, "https://example.com/other");
     }
 }
