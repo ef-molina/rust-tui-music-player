@@ -1094,14 +1094,58 @@ fn run_app() -> std::io::Result<()> {
                                 let kind = result.kind;
 
                                 if kind == crate::youtube::SearchKind::Artist {
-                                    // Drill into this artist's albums rather than downloading their channel
-                                    tracing::info!(artist = %title, "Browsing artist albums");
-                                    spawn_youtube_search(
-                                        &mut app,
-                                        title,
-                                        crate::youtube::SearchKind::Album,
-                                        0,
-                                    );
+                                    let handle = result
+                                        .artist_metadata
+                                        .as_ref()
+                                        .and_then(|m| m.handle.clone());
+
+                                    if let Some(handle) = handle {
+                                        tracing::info!(artist = %title, %handle, "Browsing artist releases");
+                                        app.youtube.results.clear();
+                                        app.youtube.selected = 0;
+                                        app.youtube.searching = true;
+                                        app.youtube.search_kind = crate::youtube::SearchKind::Album;
+                                        app.youtube.page = 0;
+                                        app.youtube.query = title.clone();
+                                        app.youtube.has_more = false;
+                                        app.set_status(
+                                            app::StatusLevel::Info,
+                                            format!("Loading releases for {title}…"),
+                                            None,
+                                        );
+
+                                        let tx = app.channels.jobs_tx.clone();
+                                        let browser = app.browser.clone();
+                                        std::thread::spawn(move || {
+                                            let result = crate::youtube::fetch_artist_releases(
+                                                &handle, &browser,
+                                            );
+                                            match result {
+                                                Ok(results) => {
+                                                    let has_more = false;
+                                                    let _ = tx.send(
+                                                        crate::event::jobs::JobResult::YoutubeSearchDone {
+                                                            results,
+                                                            has_more,
+                                                        },
+                                                    );
+                                                }
+                                                Err(e) => {
+                                                    let _ = tx.send(
+                                                        crate::event::jobs::JobResult::YoutubeSearchFailed(e),
+                                                    );
+                                                }
+                                            }
+                                        });
+                                    } else {
+                                        tracing::info!(artist = %title, "No handle — falling back to album search");
+                                        spawn_youtube_search(
+                                            &mut app,
+                                            title,
+                                            crate::youtube::SearchKind::Album,
+                                            0,
+                                        );
+                                    }
                                 } else {
                                     let search_meta = if kind == crate::youtube::SearchKind::Song {
                                         result.song_metadata.as_ref().map(|m| {

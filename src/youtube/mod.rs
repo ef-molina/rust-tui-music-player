@@ -41,6 +41,13 @@ pub struct YoutubeSongMetadata {
     pub confidence: SongConfidence,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct YoutubeArtistMetadata {
+    pub handle: Option<String>,
+    pub verified: bool,
+    pub follower_count: Option<u64>,
+}
+
 #[derive(Debug, Clone)]
 pub struct YoutubeResult {
     pub title: String,
@@ -52,6 +59,8 @@ pub struct YoutubeResult {
     pub track_count: Option<u32>,
     /// Direct metadata enrichment for song results only
     pub song_metadata: Option<YoutubeSongMetadata>,
+    /// Channel metadata for artist results only
+    pub artist_metadata: Option<YoutubeArtistMetadata>,
 }
 
 impl YoutubeResult {
@@ -208,6 +217,7 @@ fn fetch_album_details(url: String, browser: &str) -> Option<YoutubeResult> {
         subtitle,
         track_count,
         song_metadata: None,
+        artist_metadata: None,
     })
 }
 
@@ -215,8 +225,9 @@ fn fetch_album_details(url: String, browser: &str) -> Option<YoutubeResult> {
 // Artist search
 // ---------------------------------------------------------------------------
 
-/// Search YouTube Music for artist channels matching `query`.
-/// Returns artist pages (UC* IDs) — selecting one can browse their discography.
+/// Search YouTube for artist channels matching `query`.
+/// Uses the YouTube channel search filter for richer metadata (verification,
+/// follower count, handle) than YouTube Music's UC* topic channels.
 /// `page` is 0-based; fetches PAGE_SIZE results per page.
 pub fn search_artists(
     query: &str,
@@ -224,7 +235,7 @@ pub fn search_artists(
     browser: &str,
 ) -> Result<Vec<YoutubeResult>, String> {
     let search_url = format!(
-        "https://music.youtube.com/search?q={}",
+        "https://www.youtube.com/results?search_query={}&sp=EgIQAg%3D%3D",
         urlencoding::encode(query)
     );
 
@@ -245,44 +256,100 @@ pub fn search_artists(
         .map_err(|e| format!("Failed to parse yt-dlp output: {e}"))?;
 
     let skip = page * PAGE_SIZE;
-    let channel_urls: Vec<String> = root["entries"]
-        .as_array()
-        .unwrap_or(&vec![])
+    let entries = root["entries"].as_array().map(Vec::as_slice).unwrap_or(&[]);
+    let mut results: Vec<YoutubeResult> = entries
         .iter()
-        .filter_map(|e| {
-            let id = e["id"].as_str()?;
-            if id.starts_with("UC") {
-                Some(e["url"].as_str()?.to_string())
-            } else {
-                None
-            }
-        })
+        .filter_map(artist_result_from_entry)
         .skip(skip)
         .take(PAGE_SIZE)
         .collect();
 
-    if channel_urls.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    let browser = browser.to_string();
-    let handles: Vec<_> = channel_urls
-        .into_iter()
-        .map(|url| {
-            let b = browser.clone();
-            std::thread::spawn(move || fetch_artist_details(url, &b))
-        })
-        .collect();
-
-    let results: Vec<YoutubeResult> = handles
-        .into_iter()
-        .filter_map(|h| h.join().ok().flatten())
-        .collect();
-
+    rank_artist_results(&mut results);
     Ok(results)
 }
 
-fn fetch_artist_details(url: String, browser: &str) -> Option<YoutubeResult> {
+fn artist_result_from_entry(entry: &Value) -> Option<YoutubeResult> {
+    let title = entry["title"]
+        .as_str()
+        .filter(|s| !s.is_empty())?
+        .to_string();
+    let channel_url = get_string(entry, "channel_url").or_else(|| get_string(entry, "url"))?;
+    let handle = get_string(entry, "uploader_id");
+    let verified = entry["channel_is_verified"].as_bool().unwrap_or(false);
+    let follower_count = get_u64(entry, "channel_follower_count");
+
+    let subtitle = Some(format_artist_subtitle(&handle, verified, follower_count));
+
+    Some(YoutubeResult {
+        title,
+        url: channel_url,
+        kind: SearchKind::Artist,
+        subtitle,
+        track_count: None,
+        song_metadata: None,
+        artist_metadata: Some(YoutubeArtistMetadata {
+            handle,
+            verified,
+            follower_count,
+        }),
+    })
+}
+
+fn format_artist_subtitle(
+    handle: &Option<String>,
+    verified: bool,
+    follower_count: Option<u64>,
+) -> String {
+    let mut parts = Vec::new();
+    if let Some(h) = handle {
+        parts.push(h.clone());
+    }
+    if verified {
+        parts.push("Verified".into());
+    }
+    if let Some(count) = follower_count {
+        parts.push(format_follower_count(count));
+    }
+    if parts.is_empty() {
+        "Channel".into()
+    } else {
+        parts.join(" · ")
+    }
+}
+
+fn format_follower_count(count: u64) -> String {
+    if count >= 1_000_000 {
+        let millions = count as f64 / 1_000_000.0;
+        format!("{millions:.1}M followers")
+    } else if count >= 1_000 {
+        let thousands = count as f64 / 1_000.0;
+        format!("{thousands:.1}K followers")
+    } else {
+        format!("{count} followers")
+    }
+}
+
+fn rank_artist_results(results: &mut [YoutubeResult]) {
+    results.sort_by_key(|r| std::cmp::Reverse(artist_rank_key(r)));
+}
+
+fn artist_rank_key(result: &YoutubeResult) -> (u8, u8, u64) {
+    let meta = result.artist_metadata.as_ref();
+    let verified = meta.map(|m| m.verified).unwrap_or(false) as u8;
+    let is_not_topic = (!result.title.ends_with(" - Topic")) as u8;
+    let followers = meta.and_then(|m| m.follower_count).unwrap_or(0);
+    (verified, is_not_topic, followers)
+}
+
+// ---------------------------------------------------------------------------
+// Artist releases
+// ---------------------------------------------------------------------------
+
+/// Fetch an artist's release catalog from their YouTube channel releases tab.
+/// Returns album results with OLAK5uy_* playlist URLs when available.
+pub fn fetch_artist_releases(handle: &str, browser: &str) -> Result<Vec<YoutubeResult>, String> {
+    let releases_url = releases_url_for_handle(handle);
+
     let output = Command::new("yt-dlp")
         .args([
             "--dump-single-json",
@@ -292,26 +359,52 @@ fn fetch_artist_details(url: String, browser: &str) -> Option<YoutubeResult> {
             "--cookies-from-browser",
             browser,
         ])
-        .arg(&url)
+        .arg(&releases_url)
         .output()
-        .ok()?;
+        .map_err(|e| format!("Failed to spawn yt-dlp: {e}"))?;
 
-    let v: Value = serde_json::from_slice(&output.stdout).ok()?;
-    let title = v["title"].as_str().filter(|s| !s.is_empty())?.to_string();
-    let subtitle = v["description"].as_str().map(|s| {
-        // Description can be long — take just the first line
-        s.lines().next().unwrap_or("").trim().to_string()
-    });
+    let root: Value = serde_json::from_slice(&output.stdout)
+        .map_err(|e| format!("Failed to parse yt-dlp output: {e}"))?;
+
+    let artist_name = get_string(&root, "channel").or_else(|| get_string(&root, "uploader"));
+
+    let entries = root["entries"].as_array().map(Vec::as_slice).unwrap_or(&[]);
+    let results = entries
+        .iter()
+        .filter_map(|e| release_entry_to_album(e, artist_name.as_deref()))
+        .collect();
+
+    Ok(results)
+}
+
+fn release_entry_to_album(entry: &Value, artist: Option<&str>) -> Option<YoutubeResult> {
+    let title = entry["title"]
+        .as_str()
+        .filter(|s| !s.is_empty())?
+        .to_string();
+    let url = get_string(entry, "url")?;
+    let subtitle = artist.map(|a| a.to_string());
 
     Some(YoutubeResult {
         title,
         url,
-        kind: SearchKind::Artist,
+        kind: SearchKind::Album,
         subtitle,
         track_count: None,
         song_metadata: None,
+        artist_metadata: None,
     })
 }
+
+/// Build the releases tab URL for a YouTube channel handle.
+pub fn releases_url_for_handle(handle: &str) -> String {
+    let bare = handle.strip_prefix('@').unwrap_or(handle);
+    format!("https://www.youtube.com/@{bare}/releases")
+}
+
+// ---------------------------------------------------------------------------
+// Song search helpers
+// ---------------------------------------------------------------------------
 
 fn collect_song_candidates(entries: &[Value], skip: usize, take: usize) -> Vec<YoutubeResult> {
     entries
@@ -342,6 +435,7 @@ fn song_result_from_entry(entry: &Value) -> Option<YoutubeResult> {
         subtitle,
         track_count: None,
         song_metadata,
+        artist_metadata: None,
     })
 }
 
@@ -642,6 +736,15 @@ fn get_u32(value: &Value, key: &str) -> Option<u32> {
         .and_then(|n| u32::try_from(n).ok())
 }
 
+fn get_u64(value: &Value, key: &str) -> Option<u64> {
+    value.get(key).and_then(|inner| {
+        inner
+            .as_u64()
+            .or_else(|| inner.as_i64().and_then(|n| u64::try_from(n).ok()))
+            .or_else(|| inner.as_f64().map(|n| n.round().max(0.0) as u64))
+    })
+}
+
 fn non_empty(s: &str) -> bool {
     !s.trim().is_empty()
 }
@@ -720,6 +823,7 @@ mod tests {
             subtitle: meta.artist.clone().or_else(|| meta.source.clone()),
             track_count: None,
             song_metadata: Some(meta),
+            artist_metadata: None,
         }
     }
 
@@ -1038,5 +1142,239 @@ mod tests {
 
         assert_eq!(results[0].url, "https://example.com/kanye");
         assert_eq!(results[1].url, "https://example.com/other");
+    }
+
+    // ---------------------------------------------------------------
+    // Artist search result parsing and ranking tests
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn parses_verified_channel_result() {
+        let entry = json!({
+            "title": "Kanye West",
+            "channel_url": "https://www.youtube.com/channel/UCs6eXM7s8Vl5WcECcRHc2qQ",
+            "uploader_id": "@kanyewest",
+            "channel_is_verified": true,
+            "channel_follower_count": 12500000
+        });
+
+        let result = artist_result_from_entry(&entry).unwrap();
+        assert_eq!(result.title, "Kanye West");
+        assert_eq!(result.kind, SearchKind::Artist);
+
+        let meta = result.artist_metadata.as_ref().unwrap();
+        assert_eq!(meta.handle.as_deref(), Some("@kanyewest"));
+        assert!(meta.verified);
+        assert_eq!(meta.follower_count, Some(12_500_000));
+    }
+
+    #[test]
+    fn parses_topic_channel_result() {
+        let entry = json!({
+            "title": "Kanye West - Topic",
+            "channel_url": "https://www.youtube.com/channel/UCRY5dYsbIN5TylSbd7gVnZg",
+            "channel_is_verified": true,
+            "channel_follower_count": 559
+        });
+
+        let result = artist_result_from_entry(&entry).unwrap();
+        assert_eq!(result.title, "Kanye West - Topic");
+
+        let meta = result.artist_metadata.as_ref().unwrap();
+        assert!(meta.handle.is_none());
+        assert!(meta.verified);
+        assert_eq!(meta.follower_count, Some(559));
+    }
+
+    #[test]
+    fn parses_unverified_channel_with_handle() {
+        let entry = json!({
+            "title": "Kanye Archival Project",
+            "channel_url": "https://www.youtube.com/channel/UCf19qC07K5EzjIOieNgVoxQ",
+            "uploader_id": "@KanyeArchivalProject",
+            "channel_follower_count": 2580
+        });
+
+        let result = artist_result_from_entry(&entry).unwrap();
+        assert_eq!(result.title, "Kanye Archival Project");
+
+        let meta = result.artist_metadata.as_ref().unwrap();
+        assert_eq!(meta.handle.as_deref(), Some("@KanyeArchivalProject"));
+        assert!(!meta.verified);
+        assert_eq!(meta.follower_count, Some(2580));
+    }
+
+    #[test]
+    fn verified_channel_ranks_above_topic() {
+        let mut results = vec![
+            YoutubeResult {
+                title: "Kanye West - Topic".into(),
+                url: "https://example.com/topic".into(),
+                kind: SearchKind::Artist,
+                subtitle: None,
+                track_count: None,
+                song_metadata: None,
+                artist_metadata: Some(YoutubeArtistMetadata {
+                    handle: None,
+                    verified: true,
+                    follower_count: Some(559),
+                }),
+            },
+            YoutubeResult {
+                title: "Kanye West".into(),
+                url: "https://example.com/official".into(),
+                kind: SearchKind::Artist,
+                subtitle: None,
+                track_count: None,
+                song_metadata: None,
+                artist_metadata: Some(YoutubeArtistMetadata {
+                    handle: Some("@kanyewest".into()),
+                    verified: true,
+                    follower_count: Some(12_500_000),
+                }),
+            },
+        ];
+
+        rank_artist_results(&mut results);
+
+        assert_eq!(results[0].title, "Kanye West");
+        assert_eq!(results[1].title, "Kanye West - Topic");
+    }
+
+    #[test]
+    fn verified_ranks_above_unverified() {
+        let mut results = vec![
+            YoutubeResult {
+                title: "Fake Kanye".into(),
+                url: "https://example.com/fake".into(),
+                kind: SearchKind::Artist,
+                subtitle: None,
+                track_count: None,
+                song_metadata: None,
+                artist_metadata: Some(YoutubeArtistMetadata {
+                    handle: Some("@fakekanye".into()),
+                    verified: false,
+                    follower_count: Some(1000),
+                }),
+            },
+            YoutubeResult {
+                title: "Kanye West".into(),
+                url: "https://example.com/official".into(),
+                kind: SearchKind::Artist,
+                subtitle: None,
+                track_count: None,
+                song_metadata: None,
+                artist_metadata: Some(YoutubeArtistMetadata {
+                    handle: Some("@kanyewest".into()),
+                    verified: true,
+                    follower_count: Some(12_500_000),
+                }),
+            },
+        ];
+
+        rank_artist_results(&mut results);
+
+        assert_eq!(results[0].title, "Kanye West");
+        assert_eq!(results[1].title, "Fake Kanye");
+    }
+
+    #[test]
+    fn format_follower_count_millions() {
+        assert_eq!(format_follower_count(12_500_000), "12.5M followers");
+    }
+
+    #[test]
+    fn format_follower_count_thousands() {
+        assert_eq!(format_follower_count(2_580), "2.6K followers");
+    }
+
+    #[test]
+    fn format_follower_count_small() {
+        assert_eq!(format_follower_count(559), "559 followers");
+    }
+
+    #[test]
+    fn artist_subtitle_includes_handle_verified_and_followers() {
+        let subtitle = format_artist_subtitle(&Some("@kanyewest".into()), true, Some(12_500_000));
+        assert_eq!(subtitle, "@kanyewest · Verified · 12.5M followers");
+    }
+
+    #[test]
+    fn artist_subtitle_without_handle_or_verification() {
+        let subtitle = format_artist_subtitle(&None, false, Some(559));
+        assert_eq!(subtitle, "559 followers");
+    }
+
+    #[test]
+    fn artist_subtitle_empty_fallback() {
+        let subtitle = format_artist_subtitle(&None, false, None);
+        assert_eq!(subtitle, "Channel");
+    }
+
+    // ---------------------------------------------------------------
+    // Artist releases tests
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn releases_url_from_handle_with_at() {
+        assert_eq!(
+            releases_url_for_handle("@kanyewest"),
+            "https://www.youtube.com/@kanyewest/releases"
+        );
+    }
+
+    #[test]
+    fn releases_url_from_handle_without_at() {
+        assert_eq!(
+            releases_url_for_handle("kanyewest"),
+            "https://www.youtube.com/@kanyewest/releases"
+        );
+    }
+
+    #[test]
+    fn parses_release_entry_with_olak_id() {
+        let entry = json!({
+            "id": "OLAK5uy_l139P2p521JCZVZX8S_PuGFUKyD1brXWY",
+            "title": "The College Dropout",
+            "url": "https://www.youtube.com/playlist?list=OLAK5uy_l139P2p521JCZVZX8S_PuGFUKyD1brXWY",
+            "ie_key": "YoutubeTab"
+        });
+
+        let result = release_entry_to_album(&entry, Some("Kanye West")).unwrap();
+        assert_eq!(result.title, "The College Dropout");
+        assert_eq!(result.kind, SearchKind::Album);
+        assert_eq!(result.subtitle.as_deref(), Some("Kanye West"));
+        assert!(result.url.contains("OLAK5uy_"));
+    }
+
+    #[test]
+    fn release_entry_without_title_is_skipped() {
+        let entry = json!({
+            "id": "OLAK5uy_l139P2p521JCZVZX8S_PuGFUKyD1brXWY",
+            "url": "https://www.youtube.com/playlist?list=OLAK5uy_abc"
+        });
+
+        assert!(release_entry_to_album(&entry, Some("Kanye West")).is_none());
+    }
+
+    #[test]
+    fn release_entry_without_url_is_skipped() {
+        let entry = json!({
+            "title": "The College Dropout"
+        });
+
+        assert!(release_entry_to_album(&entry, Some("Kanye West")).is_none());
+    }
+
+    #[test]
+    fn release_entry_without_artist_has_no_subtitle() {
+        let entry = json!({
+            "title": "The College Dropout",
+            "url": "https://www.youtube.com/playlist?list=OLAK5uy_abc"
+        });
+
+        let result = release_entry_to_album(&entry, None).unwrap();
+        assert_eq!(result.title, "The College Dropout");
+        assert!(result.subtitle.is_none());
     }
 }
