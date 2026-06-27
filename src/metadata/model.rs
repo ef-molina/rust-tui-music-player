@@ -36,3 +36,19 @@ impl TrackMetadata {
         !self.title.is_empty() && !self.artist.is_empty() && self.duration_secs > 0.0
     }
 }
+
+/// Trusted metadata from YouTube search enrichment, carried as a sidecar
+/// alongside a download so the normalization pipeline can prefer it over
+/// weaker embedded tags.
+///
+/// This is a neutral type that does not depend on the `youtube` module,
+/// keeping `download` and `fs::normalize` decoupled from search concerns.
+#[derive(Debug, Clone)]
+pub struct TrustedSearchMetadata {
+    pub track: Option<String>,
+    pub artist: Option<String>,
+    pub album: Option<String>,
+    /// True when the search enrichment had High or Medium confidence
+    /// (i.e. multiple core fields were present in the direct metadata fetch).
+    pub is_trusted: bool,
+}

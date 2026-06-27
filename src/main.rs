@@ -398,7 +398,11 @@ fn handle_tick(app: &mut AppState) {
                 tracing::info!(url = %url, pid, "Download job started");
             }
 
-            JobResult::DownloadFinished { url, temp_path } => {
+            JobResult::DownloadFinished {
+                url,
+                temp_path,
+                search_metadata,
+            } => {
                 app.downloads.active_url = None;
                 if !url.is_empty() {
                     app.downloads.active_progress = None;
@@ -416,7 +420,11 @@ fn handle_tick(app: &mut AppState) {
 
                 let library_root = app.browser_state.root_dir.clone();
 
-                match crate::fs::normalize::normalize_downloaded_track(&temp_path, &library_root) {
+                match crate::fs::normalize::normalize_downloaded_track_with_sidecar(
+                    &temp_path,
+                    &library_root,
+                    search_metadata.as_ref(),
+                ) {
                     Ok(normalized) => {
                         app.set_status(
                             StatusLevel::Success,
@@ -688,7 +696,7 @@ fn run_app() -> std::io::Result<()> {
                                     let title = truncate_status_url(&url);
                                     std::thread::spawn(move || {
                                         download::spawn_playlist_download(
-                                            url, title, staging, browser, tx,
+                                            url, title, staging, browser, tx, None,
                                         );
                                     });
 
@@ -1095,6 +1103,22 @@ fn run_app() -> std::io::Result<()> {
                                         0,
                                     );
                                 } else {
+                                    let search_meta = if kind == crate::youtube::SearchKind::Song {
+                                        result.song_metadata.as_ref().map(|m| {
+                                            crate::metadata::model::TrustedSearchMetadata {
+                                                track: m.track.clone(),
+                                                artist: m.artist.clone(),
+                                                album: m.album.clone(),
+                                                is_trusted: matches!(
+                                                    m.confidence,
+                                                    crate::youtube::SongConfidence::High
+                                                        | crate::youtube::SongConfidence::Medium
+                                                ),
+                                            }
+                                        })
+                                    } else {
+                                        None
+                                    };
                                     tracing::info!(url = %url, "Queuing download from YouTube results");
                                     app.downloads.active_url = Some(url.clone());
                                     app.set_status(
@@ -1108,7 +1132,12 @@ fn run_app() -> std::io::Result<()> {
                                     let dl_title = title.clone();
                                     std::thread::spawn(move || {
                                         download::spawn_playlist_download(
-                                            url, dl_title, staging, browser, tx,
+                                            url,
+                                            dl_title,
+                                            staging,
+                                            browser,
+                                            tx,
+                                            search_meta,
                                         );
                                     });
                                     app.ui.focus = FocusPane::Browser;
