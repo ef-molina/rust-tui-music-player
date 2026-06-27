@@ -1,5 +1,6 @@
 //! Background job results (download/search/etc).
 
+use crate::metadata::model::TrustedSearchMetadata;
 use crate::youtube::YoutubeResult;
 use std::path::PathBuf;
 
@@ -28,6 +29,7 @@ pub enum JobResult {
     DownloadFinished {
         url: String,
         temp_path: PathBuf,
+        search_metadata: Option<TrustedSearchMetadata>,
     },
 
     DownloadFailed {

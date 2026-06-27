@@ -1,4 +1,5 @@
 use crate::event::jobs::JobResult;
+use crate::metadata::model::TrustedSearchMetadata;
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 use std::process::Stdio;
@@ -14,12 +15,17 @@ pub fn staging_dir() -> PathBuf {
 
 /// Download a URL (single track or full playlist) with progress streaming.
 /// Designed to run in a background thread; sends `JobResult` messages via `tx`.
+///
+/// `search_metadata` carries trusted metadata from YouTube search enrichment.
+/// Pass `Some` for individual song downloads from `:ss` results.
+/// Pass `None` for direct URL downloads, album downloads, and playlist downloads.
 pub fn spawn_playlist_download(
     url: String,
     title: String,
     staging: PathBuf,
     browser: String,
     tx: Sender<JobResult>,
+    search_metadata: Option<TrustedSearchMetadata>,
 ) {
     // Use a per-job subdirectory so concurrent downloads don't clobber each other
     // and so we can reliably collect every file that belongs to this job.
@@ -165,6 +171,7 @@ pub fn spawn_playlist_download(
                     let _ = tx.send(JobResult::DownloadFinished {
                         url: evt_url,
                         temp_path: entry.path(),
+                        search_metadata: search_metadata.clone(),
                     });
                 }
                 // Remove the now-empty per-job staging directory
