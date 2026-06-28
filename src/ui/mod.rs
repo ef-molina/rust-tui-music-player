@@ -780,6 +780,106 @@ fn render_album(frame: &mut Frame, area: Rect, app: &AppState) {
 }
 
 // -----------------------------------------------------------------------------
+// Album preview pane
+// -----------------------------------------------------------------------------
+fn render_album_preview(
+    frame: &mut Frame,
+    area: Rect,
+    app: &AppState,
+    preview: &crate::youtube::AlbumPreview,
+) {
+    let track_count = preview.tracks.len();
+    let artist_part = preview
+        .artist
+        .as_deref()
+        .map(|a| format!(" — {a}"))
+        .unwrap_or_default();
+    let title = format!(
+        " {} · {} track{}{artist_part} ",
+        preview.album_title,
+        track_count,
+        if track_count == 1 { "" } else { "s" },
+    );
+
+    let block = Block::default()
+        .title(title)
+        .borders(Borders::ALL)
+        .border_style(pane_border_style(true));
+
+    if preview.tracks.is_empty() {
+        frame.render_widget(
+            Paragraph::new("No tracks found")
+                .alignment(Alignment::Center)
+                .style(Style::default().fg(MUTED))
+                .block(block),
+            area,
+        );
+        return;
+    }
+
+    let inner_width = area.width.saturating_sub(6) as usize;
+
+    let items: Vec<ListItem> = preview
+        .tracks
+        .iter()
+        .enumerate()
+        .map(|(i, track)| {
+            let num = format!("{:>2}. ", i + 1);
+            let duration_str = track
+                .duration_secs
+                .map(format_duration_secs)
+                .unwrap_or_default();
+            let dur_width = duration_str.len();
+            let title_max = inner_width.saturating_sub(num.len() + dur_width + 2);
+            let title_str = truncate_middle(&track.title, title_max);
+
+            let is_selected = i == app.youtube.album_preview_selected;
+            let title_style = if is_selected {
+                Style::default()
+                    .fg(HIGHLIGHT_FG)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(ACCENT)
+            };
+
+            let line = Line::from(vec![
+                Span::styled(num, Style::default().fg(MUTED)),
+                Span::styled(title_str, title_style),
+                Span::raw("  "),
+                Span::styled(duration_str, Style::default().fg(SUBTLE)),
+            ]);
+
+            ListItem::new(line)
+        })
+        .collect();
+
+    let list = List::new(items)
+        .block(block)
+        .highlight_style(
+            Style::default()
+                .bg(HIGHLIGHT_BG)
+                .fg(HIGHLIGHT_FG)
+                .add_modifier(Modifier::BOLD),
+        )
+        .highlight_symbol("▶ ");
+
+    let mut state = ListState::default();
+    state.select(Some(app.youtube.album_preview_selected));
+    frame.render_stateful_widget(list, area, &mut state);
+
+    let hint = Paragraph::new("Enter download · Backspace back · ↑↓ move")
+        .alignment(Alignment::Center)
+        .style(Style::default().fg(SUBTLE));
+    let hint_area = Rect {
+        y: area.y + area.height.saturating_sub(2),
+        height: 1,
+        x: area.x + 1,
+        width: area.width.saturating_sub(2),
+    };
+    frame.render_widget(hint, hint_area);
+}
+
+// -----------------------------------------------------------------------------
 // YouTube results pane
 // -----------------------------------------------------------------------------
 fn kind_badge(kind: crate::youtube::SearchKind) -> Span<'static> {
@@ -840,6 +940,34 @@ fn format_duration_secs(duration_secs: u32) -> String {
 }
 
 fn render_youtube_results(frame: &mut Frame, area: Rect, app: &AppState) {
+    // --- Album preview mode ---
+    if let Some(preview) = &app.youtube.album_preview {
+        render_album_preview(frame, area, app, preview);
+        return;
+    }
+
+    if app.youtube.album_preview_loading {
+        let album_name = app
+            .youtube
+            .results
+            .get(app.youtube.selected)
+            .map(|r| r.title.as_str())
+            .unwrap_or("album");
+        let block = Block::default()
+            .title(format!(" Preview — Loading {album_name}… "))
+            .borders(Borders::ALL)
+            .border_style(pane_border_style(true));
+        frame.render_widget(
+            Paragraph::new(format!("Loading album preview for {album_name}…"))
+                .alignment(Alignment::Center)
+                .style(Style::default().fg(MUTED))
+                .block(block),
+            area,
+        );
+        return;
+    }
+
+    // --- Normal results mode ---
     let kind_label = match app.youtube.search_kind {
         crate::youtube::SearchKind::Song => "Songs",
         crate::youtube::SearchKind::Album => "Albums",
@@ -1004,6 +1132,12 @@ fn render_youtube_results(frame: &mut Frame, area: Rect, app: &AppState) {
     let hint_text = match app.youtube.results.get(app.youtube.selected) {
         Some(r) if r.kind == crate::youtube::SearchKind::Artist => {
             "Enter browse albums · Backspace back · ↑↓ move"
+        }
+        Some(r)
+            if r.kind == crate::youtube::SearchKind::Album
+                && crate::youtube::is_olak_playlist_url(&r.url) =>
+        {
+            "Enter preview tracks · Backspace back · ↑↓ move"
         }
         _ => "Enter download · Backspace back · ↑↓ move",
     };

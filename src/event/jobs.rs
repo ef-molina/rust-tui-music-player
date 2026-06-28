@@ -1,7 +1,7 @@
 //! Background job results (download/search/etc).
 
 use crate::metadata::model::TrustedSearchMetadata;
-use crate::youtube::YoutubeResult;
+use crate::youtube::{AlbumPreview, YoutubeResult};
 use std::path::PathBuf;
 
 #[derive(Debug, Clone)]
@@ -45,4 +45,15 @@ pub enum JobResult {
     },
 
     YoutubeSearchFailed(String),
+
+    /// Album tracklist preview loaded from an OLAK5uy_* playlist
+    AlbumPreviewDone {
+        preview: AlbumPreview,
+    },
+
+    /// Album preview fetch failed
+    AlbumPreviewFailed {
+        album_url: String,
+        error: String,
+    },
 }

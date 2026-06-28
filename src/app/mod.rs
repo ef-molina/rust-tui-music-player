@@ -22,7 +22,7 @@ use crate::lyrics_fetch::LyricsFetchResult;
 use crate::metadata::model::TrackMetadata;
 use crate::player::Player;
 use crate::search::SearchMessage;
-use crate::youtube::{SearchKind, YoutubeResult};
+use crate::youtube::{AlbumPreview, SearchKind, YoutubeResult};
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, Sender};
@@ -249,6 +249,20 @@ pub struct YoutubeState {
     pub page: usize,
     pub query: String,
     pub has_more: bool,
+
+    pub album_preview: Option<AlbumPreview>,
+    pub album_preview_loading: bool,
+    pub pending_album_preview_url: Option<String>,
+    pub album_preview_selected: usize,
+}
+
+impl YoutubeState {
+    pub fn clear_album_preview(&mut self) {
+        self.album_preview = None;
+        self.album_preview_loading = false;
+        self.pending_album_preview_url = None;
+        self.album_preview_selected = 0;
+    }
 }
 
 impl Default for YoutubeState {
@@ -261,6 +275,10 @@ impl Default for YoutubeState {
             page: 0,
             query: String::new(),
             has_more: false,
+            album_preview: None,
+            album_preview_loading: false,
+            pending_album_preview_url: None,
+            album_preview_selected: 0,
         }
     }
 }
@@ -432,5 +450,42 @@ impl AppState {
             album_entries: self.album.entries.clone(),
             album_selected: self.album.selected,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn youtube_state_default_has_no_preview() {
+        let state = YoutubeState::default();
+        assert!(state.album_preview.is_none());
+        assert!(!state.album_preview_loading);
+        assert!(state.pending_album_preview_url.is_none());
+        assert_eq!(state.album_preview_selected, 0);
+    }
+
+    #[test]
+    fn clear_album_preview_resets_all_preview_fields() {
+        let mut state = YoutubeState {
+            album_preview: Some(AlbumPreview {
+                album_title: "Test".into(),
+                album_url: "https://example.com".into(),
+                artist: Some("Artist".into()),
+                tracks: vec![],
+            }),
+            album_preview_loading: true,
+            pending_album_preview_url: Some("https://example.com".into()),
+            album_preview_selected: 5,
+            ..Default::default()
+        };
+
+        state.clear_album_preview();
+
+        assert!(state.album_preview.is_none());
+        assert!(!state.album_preview_loading);
+        assert!(state.pending_album_preview_url.is_none());
+        assert_eq!(state.album_preview_selected, 0);
     }
 }
