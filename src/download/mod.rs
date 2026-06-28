@@ -17,8 +17,9 @@ pub fn staging_dir() -> PathBuf {
 /// Designed to run in a background thread; sends `JobResult` messages via `tx`.
 ///
 /// `search_metadata` carries trusted metadata from YouTube search enrichment.
-/// Pass `Some` for individual song downloads from `:ss` results.
-/// Pass `None` for direct URL downloads, album downloads, and playlist downloads.
+/// Pass `Some` for individual song downloads from `:ss` results and album preview
+/// downloads that should share one trusted album artist/album context.
+/// Pass `None` for direct URL downloads, direct album downloads, and playlist downloads.
 pub fn spawn_playlist_download(
     url: String,
     title: String,

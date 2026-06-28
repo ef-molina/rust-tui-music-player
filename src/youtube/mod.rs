@@ -403,6 +403,116 @@ pub fn releases_url_for_handle(handle: &str) -> String {
 }
 
 // ---------------------------------------------------------------------------
+// Album preview
+// ---------------------------------------------------------------------------
+
+#[allow(dead_code)]
+#[derive(Debug, Clone)]
+pub struct AlbumPreviewTrack {
+    pub title: String,
+    pub duration_secs: Option<u32>,
+    pub video_id: Option<String>,
+    pub url: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct AlbumPreview {
+    pub album_title: String,
+    pub album_url: String,
+    pub artist: Option<String>,
+    pub tracks: Vec<AlbumPreviewTrack>,
+}
+
+/// Returns true when the URL points to an official OLAK5uy_* album playlist.
+/// Used to gate preview behavior: only OLAK release playlist URLs from
+/// `/@handle/releases` trigger preview. `:salb` results (MPREb_*, VL*) do not.
+pub fn is_olak_playlist_url(url: &str) -> bool {
+    url.contains("OLAK5uy_")
+}
+
+/// Fetch an album tracklist preview from an OLAK5uy_* playlist URL.
+///
+/// Uses `yt-dlp --flat-playlist --dump-single-json` for a single cheap request.
+/// Does not full-resolve the playlist.
+///
+/// `album_title_hint` and `artist_hint` are carried from the selected
+/// `YoutubeResult` because the OLAK flat-playlist root may have missing
+/// or empty `title`/`channel`/`uploader` fields.
+pub fn fetch_album_preview(
+    url: &str,
+    album_title_hint: Option<&str>,
+    artist_hint: Option<&str>,
+    browser: &str,
+) -> Result<AlbumPreview, String> {
+    let output = Command::new("yt-dlp")
+        .args([
+            "--dump-single-json",
+            "--flat-playlist",
+            "--no-warnings",
+            "--quiet",
+            "--cookies-from-browser",
+            browser,
+        ])
+        .arg(url)
+        .output()
+        .map_err(|e| format!("Failed to spawn yt-dlp: {e}"))?;
+
+    let root: Value = serde_json::from_slice(&output.stdout)
+        .map_err(|e| format!("Failed to parse yt-dlp output: {e}"))?;
+
+    parse_album_preview_json(&root, url, album_title_hint, artist_hint)
+}
+
+fn parse_album_preview_json(
+    root: &Value,
+    url: &str,
+    album_title_hint: Option<&str>,
+    artist_hint: Option<&str>,
+) -> Result<AlbumPreview, String> {
+    let album_title = album_title_hint
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        .or_else(|| get_string(root, "title"))
+        .unwrap_or_default();
+
+    let artist = artist_hint
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        .or_else(|| get_string(root, "channel"))
+        .or_else(|| get_string(root, "uploader"));
+
+    let entries = root["entries"].as_array().map(Vec::as_slice).unwrap_or(&[]);
+    let tracks: Vec<AlbumPreviewTrack> = entries
+        .iter()
+        .filter_map(parse_album_preview_track)
+        .collect();
+
+    Ok(AlbumPreview {
+        album_title,
+        album_url: url.to_string(),
+        artist,
+        tracks,
+    })
+}
+
+fn parse_album_preview_track(entry: &Value) -> Option<AlbumPreviewTrack> {
+    let title = entry["title"]
+        .as_str()
+        .filter(|s| !s.is_empty())?
+        .to_string();
+    let duration_secs = get_u32(entry, "duration");
+    let video_id = get_string(entry, "id");
+    let url = get_string(entry, "url");
+
+    Some(AlbumPreviewTrack {
+        title,
+        duration_secs,
+        video_id,
+        url,
+    })
+}
+
+// ---------------------------------------------------------------------------
 // Song search helpers
 // ---------------------------------------------------------------------------
 
@@ -768,6 +878,7 @@ pub fn spawn_youtube_search(
         app.youtube.results.clear();
         app.youtube.selected = 0;
     }
+    app.youtube.clear_album_preview();
     app.youtube.searching = true;
     app.youtube.search_kind = kind;
     app.youtube.page = page;
@@ -1376,5 +1487,142 @@ mod tests {
         let result = release_entry_to_album(&entry, None).unwrap();
         assert_eq!(result.title, "The College Dropout");
         assert!(result.subtitle.is_none());
+    }
+
+    // ---------------------------------------------------------------
+    // Album preview parsing tests
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn parses_album_preview_track_with_title_duration_id_and_url() {
+        let entry = json!({
+            "title": "Donda Chant",
+            "duration": 53.0,
+            "id": "J8k-73s2fHw",
+            "url": "https://music.youtube.com/watch?v=J8k-73s2fHw"
+        });
+
+        let track = parse_album_preview_track(&entry).unwrap();
+        assert_eq!(track.title, "Donda Chant");
+        assert_eq!(track.duration_secs, Some(53));
+        assert_eq!(track.video_id.as_deref(), Some("J8k-73s2fHw"));
+        assert_eq!(
+            track.url.as_deref(),
+            Some("https://music.youtube.com/watch?v=J8k-73s2fHw")
+        );
+    }
+
+    #[test]
+    fn parses_album_preview_track_without_duration() {
+        let entry = json!({
+            "title": "Jail",
+            "id": "abc123"
+        });
+
+        let track = parse_album_preview_track(&entry).unwrap();
+        assert_eq!(track.title, "Jail");
+        assert!(track.duration_secs.is_none());
+        assert_eq!(track.video_id.as_deref(), Some("abc123"));
+        assert!(track.url.is_none());
+    }
+
+    #[test]
+    fn album_preview_track_without_title_is_skipped() {
+        let entry = json!({
+            "duration": 120.0,
+            "id": "abc123"
+        });
+
+        assert!(parse_album_preview_track(&entry).is_none());
+    }
+
+    #[test]
+    fn album_preview_track_with_empty_title_is_skipped() {
+        let entry = json!({
+            "title": "",
+            "duration": 120.0
+        });
+
+        assert!(parse_album_preview_track(&entry).is_none());
+    }
+
+    #[test]
+    fn album_preview_prefers_title_and_artist_hints() {
+        let root = json!({
+            "title": "Root Title",
+            "channel": "Root Channel",
+            "entries": [
+                {"title": "Track 1", "duration": 180.0, "id": "v1"},
+                {"title": "Track 2", "duration": 240.0, "id": "v2"}
+            ]
+        });
+
+        let preview = parse_album_preview_json(
+            &root,
+            "https://www.youtube.com/playlist?list=OLAK5uy_abc",
+            Some("The College Dropout"),
+            Some("Kanye West"),
+        )
+        .unwrap();
+
+        assert_eq!(preview.album_title, "The College Dropout");
+        assert_eq!(preview.artist.as_deref(), Some("Kanye West"));
+        assert_eq!(preview.tracks.len(), 2);
+        assert_eq!(preview.tracks[0].title, "Track 1");
+        assert_eq!(preview.tracks[0].duration_secs, Some(180));
+        assert_eq!(preview.tracks[1].title, "Track 2");
+        assert_eq!(
+            preview.album_url,
+            "https://www.youtube.com/playlist?list=OLAK5uy_abc"
+        );
+    }
+
+    #[test]
+    fn album_preview_falls_back_to_root_title_when_hint_missing() {
+        let root = json!({
+            "title": "Donda",
+            "channel": "Kanye West",
+            "entries": [
+                {"title": "Donda Chant", "duration": 53.0, "id": "v1"}
+            ]
+        });
+
+        let preview = parse_album_preview_json(
+            &root,
+            "https://www.youtube.com/playlist?list=OLAK5uy_xyz",
+            None,
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(preview.album_title, "Donda");
+        assert_eq!(preview.artist.as_deref(), Some("Kanye West"));
+        assert_eq!(preview.tracks.len(), 1);
+    }
+
+    #[test]
+    fn detects_olak_playlist_url() {
+        assert!(is_olak_playlist_url(
+            "https://www.youtube.com/playlist?list=OLAK5uy_l139P2p521JCZVZX8S_PuGFUKyD1brXWY"
+        ));
+        assert!(is_olak_playlist_url(
+            "https://www.youtube.com/playlist?list=OLAK5uy_abc"
+        ));
+    }
+
+    #[test]
+    fn rejects_non_olak_playlist_url_for_preview() {
+        assert!(!is_olak_playlist_url(
+            "https://music.youtube.com/browse/MPREb_KCNeTnK02S7"
+        ));
+        assert!(!is_olak_playlist_url(
+            "https://music.youtube.com/browse/VLPLEbPTbJsrTelVjk5XOA9b8ihNV9WQVvh8"
+        ));
+        assert!(!is_olak_playlist_url(
+            "https://www.youtube.com/playlist?list=PLGeJR8ZOrTZfWkXN2AD"
+        ));
+        assert!(!is_olak_playlist_url(
+            "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+        ));
     }
 }

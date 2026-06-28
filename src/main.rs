@@ -445,13 +445,13 @@ fn handle_tick(app: &mut AppState) {
                             app.channels.search_tx.clone(),
                         );
 
-                        // Refresh browser if the new track landed in or under the current dir
+                        // Refresh browser if the new track landed under the current dir
                         let track_album_dir = normalized.final_path.parent();
-                        let track_artist_dir = track_album_dir.and_then(|d| d.parent());
 
-                        let browser_stale = track_artist_dir
-                            .map(|d| d == app.browser_state.current_dir)
-                            .unwrap_or(false);
+                        let browser_stale = normalized
+                            .final_path
+                            .ancestors()
+                            .any(|a| a == app.browser_state.current_dir);
 
                         if browser_stale {
                             app.browser_state.entries =
@@ -522,6 +522,7 @@ fn handle_tick(app: &mut AppState) {
             }
             JobResult::YoutubeSearchDone { results, has_more } => {
                 app.youtube.searching = false;
+                app.youtube.clear_album_preview();
                 let appending = app.youtube.page > 0 && !app.youtube.results.is_empty();
                 let new_count = results.len();
                 if appending {
@@ -552,6 +553,40 @@ fn handle_tick(app: &mut AppState) {
                     Some(600),
                 );
                 tracing::error!(error = %error, "YouTube search failed");
+            }
+            JobResult::AlbumPreviewDone { preview } => {
+                let matches_pending =
+                    app.youtube.pending_album_preview_url.as_deref() == Some(&preview.album_url);
+                if matches_pending {
+                    let track_count = preview.tracks.len();
+                    let title = preview.album_title.clone();
+                    app.youtube.album_preview = Some(preview);
+                    app.youtube.album_preview_loading = false;
+                    app.youtube.pending_album_preview_url = None;
+                    app.youtube.album_preview_selected = 0;
+                    app.set_status(
+                        StatusLevel::Info,
+                        format!("{title} · {track_count} tracks"),
+                        Some(300),
+                    );
+                    tracing::info!(track_count, "Album preview loaded");
+                } else {
+                    tracing::debug!("Ignoring stale album preview result");
+                }
+            }
+            JobResult::AlbumPreviewFailed { album_url, error } => {
+                let matches_pending =
+                    app.youtube.pending_album_preview_url.as_deref() == Some(&album_url);
+                if matches_pending {
+                    app.youtube.album_preview_loading = false;
+                    app.youtube.pending_album_preview_url = None;
+                    app.set_status(
+                        StatusLevel::Error,
+                        format!("Preview failed: {error}"),
+                        Some(500),
+                    );
+                    tracing::error!(url = %album_url, error = %error, "Album preview failed");
+                }
             }
         }
     }
@@ -932,7 +967,11 @@ fn run_app() -> std::io::Result<()> {
                             app.lyrics_state.scroll = app.lyrics_state.scroll.saturating_sub(1);
                         }
                         FocusPane::YoutubeResults => {
-                            if app.youtube.selected > 0 {
+                            if app.youtube.album_preview.is_some() {
+                                if app.youtube.album_preview_selected > 0 {
+                                    app.youtube.album_preview_selected -= 1;
+                                }
+                            } else if app.youtube.selected > 0 {
                                 app.youtube.selected -= 1;
                             }
                         }
@@ -965,20 +1004,32 @@ fn run_app() -> std::io::Result<()> {
                             }
                         }
                         FocusPane::YoutubeResults => {
-                            let max = if app.youtube.has_more {
-                                app.youtube.results.len() // can reach the "Load more" row
+                            if let Some(preview) = &app.youtube.album_preview {
+                                let max = preview.tracks.len().saturating_sub(1);
+                                if app.youtube.album_preview_selected < max {
+                                    app.youtube.album_preview_selected += 1;
+                                }
                             } else {
-                                app.youtube.results.len().saturating_sub(1)
-                            };
-                            if app.youtube.selected < max {
-                                app.youtube.selected += 1;
+                                let max = if app.youtube.has_more {
+                                    app.youtube.results.len()
+                                } else {
+                                    app.youtube.results.len().saturating_sub(1)
+                                };
+                                if app.youtube.selected < max {
+                                    app.youtube.selected += 1;
+                                }
                             }
                         }
                     },
 
                     // -----------------------------------------------------------------
                     AppEvent::NavigateBack => {
-                        if !navigate_back(&mut app) {
+                        if app.ui.focus == FocusPane::YoutubeResults
+                            && (app.youtube.album_preview.is_some()
+                                || app.youtube.album_preview_loading)
+                        {
+                            app.youtube.clear_album_preview();
+                        } else if !navigate_back(&mut app) {
                             app.set_status(StatusLevel::Info, "No previous view", Some(250));
                         }
                     }
@@ -1079,21 +1130,62 @@ fn run_app() -> std::io::Result<()> {
                         }
                         FocusPane::Lyrics => {}
                         FocusPane::YoutubeResults => {
-                            // The virtual "Load more" row sits after all real results
-                            let load_more_idx = app.youtube.results.len();
-                            if app.youtube.selected == load_more_idx && app.youtube.has_more {
+                            // --- Download from album preview ---
+                            if let Some(preview) = app.youtube.album_preview.take() {
+                                let url = preview.album_url;
+                                let title = preview.album_title.clone();
+                                let search_meta =
+                                    Some(crate::metadata::model::TrustedSearchMetadata {
+                                        track: None,
+                                        artist: preview.artist.clone(),
+                                        album: Some(preview.album_title),
+                                        is_trusted: true,
+                                        scope:
+                                            crate::metadata::model::TrustedSearchMetadataScope::Album,
+                                    });
+                                tracing::info!(url = %url, "Downloading album from preview");
+                                app.youtube.clear_album_preview();
+                                app.downloads.active_url = Some(url.clone());
+                                app.set_status(
+                                    StatusLevel::Info,
+                                    format!("Downloading: {title}"),
+                                    None,
+                                );
+                                let tx = app.channels.jobs_tx.clone();
+                                let staging = download::staging_dir();
+                                let browser = app.browser.clone();
+                                std::thread::spawn(move || {
+                                    download::spawn_playlist_download(
+                                        url,
+                                        title,
+                                        staging,
+                                        browser,
+                                        tx,
+                                        search_meta,
+                                    );
+                                });
+                                app.ui.focus = FocusPane::Browser;
+                            }
+                            // --- Load more ---
+                            else if app.youtube.selected == app.youtube.results.len()
+                                && app.youtube.has_more
+                            {
                                 let query = app.youtube.query.clone();
                                 let kind = app.youtube.search_kind;
                                 let next_page = app.youtube.page + 1;
                                 spawn_youtube_search(&mut app, query, kind, next_page);
-                            } else if let Some(result) =
+                            }
+                            // --- Select a result ---
+                            else if let Some(result) =
                                 app.youtube.results.get(app.youtube.selected)
                             {
                                 let url = result.url.clone();
                                 let title = result.title.clone();
+                                let subtitle = result.subtitle.clone();
                                 let kind = result.kind;
 
                                 if kind == crate::youtube::SearchKind::Artist {
+                                    // --- Browse artist releases ---
                                     let handle = result
                                         .artist_metadata
                                         .as_ref()
@@ -1146,7 +1238,44 @@ fn run_app() -> std::io::Result<()> {
                                             0,
                                         );
                                     }
+                                } else if kind == crate::youtube::SearchKind::Album
+                                    && crate::youtube::is_olak_playlist_url(&url)
+                                {
+                                    // --- Preview OLAK release album ---
+                                    tracing::info!(url = %url, "Loading album preview");
+                                    app.youtube.album_preview_loading = true;
+                                    app.youtube.pending_album_preview_url = Some(url.clone());
+                                    app.youtube.album_preview_selected = 0;
+                                    app.set_status(
+                                        StatusLevel::Info,
+                                        format!("Loading preview for {title}…"),
+                                        None,
+                                    );
+
+                                    let tx = app.channels.jobs_tx.clone();
+                                    let browser = app.browser.clone();
+                                    std::thread::spawn(move || {
+                                        let result = crate::youtube::fetch_album_preview(
+                                            &url,
+                                            Some(&title),
+                                            subtitle.as_deref(),
+                                            &browser,
+                                        );
+                                        match result {
+                                            Ok(preview) => {
+                                                let _ = tx
+                                                    .send(JobResult::AlbumPreviewDone { preview });
+                                            }
+                                            Err(e) => {
+                                                let _ = tx.send(JobResult::AlbumPreviewFailed {
+                                                    album_url: url,
+                                                    error: e,
+                                                });
+                                            }
+                                        }
+                                    });
                                 } else {
+                                    // --- Immediate download (songs, non-OLAK albums) ---
                                     let search_meta = if kind == crate::youtube::SearchKind::Song {
                                         result.song_metadata.as_ref().map(|m| {
                                             crate::metadata::model::TrustedSearchMetadata {
@@ -1158,6 +1287,8 @@ fn run_app() -> std::io::Result<()> {
                                                     crate::youtube::SongConfidence::High
                                                         | crate::youtube::SongConfidence::Medium
                                                 ),
+                                                scope:
+                                                    crate::metadata::model::TrustedSearchMetadataScope::Song,
                                             }
                                         })
                                     } else {

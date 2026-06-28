@@ -29,6 +29,16 @@ pub enum MetadataConfidence {
     FilenameOnly,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TrustedSearchMetadataScope {
+    /// Trusted metadata from song search enrichment (`:ss`).
+    /// Embedded auto-generated album markers still take precedence.
+    Song,
+    /// Trusted metadata from album preview downloads.
+    /// Album artist/album should stay consistent across the selected release.
+    Album,
+}
+
 impl TrackMetadata {
     /// Returns true if we have the minimum required fields
     /// to safely attempt a lyrics lookup.
@@ -51,4 +61,5 @@ pub struct TrustedSearchMetadata {
     /// True when the search enrichment had High or Medium confidence
     /// (i.e. multiple core fields were present in the direct metadata fetch).
     pub is_trusted: bool,
+    pub scope: TrustedSearchMetadataScope,
 }
